@@ -76,11 +76,6 @@ func (s *Sender) Configure(config *notification.Config) (bool, error) {
 		return false, nil
 	}
 	s.Config = stompConfig
-	err = s.Connect()
-	if err != nil {
-		return false, err
-	}
-
 	return true, nil
 }
 
@@ -135,6 +130,10 @@ type notificationEnvelope struct {
 // Send function has failover feature - in case one broker fails it reconnect
 // to another broker and send message again
 func (s *Sender) Send(notificationName string) error {
+	err := s.Connect()
+	if err != nil {
+		return err
+	}
 	// Marshal notification.
 	jsonNotification, err := json.Marshal(notificationEnvelope{struct{ Name string }{notificationName}})
 	if err != nil {
@@ -160,8 +159,10 @@ func (s *Sender) Send(notificationName string) error {
 		err := s.Connect()
 		if err != nil {
 			log.Error("Failed to connect to any broker during reconnect: " + err.Error())
+			return err
 		}
 	}
+	s.Disconnect()
 
 	return nil
 }
