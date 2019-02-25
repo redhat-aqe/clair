@@ -19,7 +19,11 @@ package redhat
 
 import (
 	"encoding/json"
-	"encoding/xml"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,17 +32,20 @@ import (
 	"github.com/coreos/clair/database"
 	"github.com/coreos/clair/ext/versionfmt/rpm"
 	"github.com/coreos/clair/ext/vulnsrc"
+	"github.com/coreos/clair/pkg/brew"
 	"github.com/coreos/clair/pkg/commonerr"
 	"github.com/coreos/clair/pkg/httputil"
+	"github.com/patrickmn/go-cache"
 )
 
 const (
-	rhsaFirstTime    = "2000-01-001T01:01:01+02:00"
-	vmaasURL         = "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1"
-	cveCPEMappingURL = "https://www.redhat.com/security/data/metrics/cvemap.xml"
-	cveURL           = "https://access.redhat.com/security/cve/"
-	updaterFlag      = "redHatUpdater"
-	affectedType     = database.AffectBinaryPackage
+	rhsaFirstTime = "2000-01-01T01:01:01+02:00"
+	vmaasURL      = "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1"
+	cpeMapping    = "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt"
+	cveURL        = "https://access.redhat.com/security/cve/"
+	updaterFlag   = "redHatUpdater"
+	affectedType  = database.BinaryPackage
+	brewHub       = "https://brewhub.engineering.redhat.com/brewhub"
 )
 
 type Advisory struct {
@@ -66,54 +73,21 @@ type RHSAdata struct {
 	ModifiedSince string              `json:"modified_since"`
 }
 
-type NVRA struct {
-	Name    string
-	Version string
-	Release string
-	Arch    string
-}
-
 type VmaasPostRequest struct {
 	ErrataList    []string `json:"errata_list"`
 	ModifiedSince string   `json:"modified_since"`
 	Page          int      `json:"page"`
 }
 
-type Vulnerability struct {
-	XMLName        xml.Name `xml:"Vulnerability"`
-	Text           string   `xml:",chardata"`
-	Name           string   `xml:"name,attr"`
-	ThreatSeverity string   `xml:"ThreatSeverity"`
-	PublicDate     string   `xml:"PublicDate"`
-	Bugzilla       struct {
-		Text string `xml:",chardata"`
-		ID   string `xml:"id,attr"`
-		URL  string `xml:"url,attr"`
-		Lang string `xml:"lang,attr"`
-	} `xml:"Bugzilla"`
-	AffectedRelease []struct {
-		Text        string `xml:",chardata"`
-		Cpe         string `xml:"cpe,attr"`
-		ProductName string `xml:"ProductName"`
-		ReleaseDate string `xml:"ReleaseDate"`
-		Advisory    struct {
-			Text string `xml:",chardata"`
-			Type string `xml:"type,attr"`
-			URL  string `xml:"url,attr"`
-		} `xml:"Advisory"`
-		Package struct {
-			Text string `xml:",chardata"`
-			Name string `xml:"name,attr"`
-		} `xml:"Package"`
-	} `xml:"AffectedRelease"`
-	UpstreamFix string `xml:"UpstreamFix"`
-}
-
-type Cvemap struct {
-	Vulnerability []Vulnerability
+type CpeMapping struct {
+	Advisory     string
+	CVEs         []string
+	PackageToCpe map[string][]string
 }
 
 type updater struct{}
+
+var c = cache.New(24*time.Hour, 30*time.Minute)
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
@@ -171,9 +145,9 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		}
 	}
 
-	r, err := httputil.GetWithUserAgent(cveCPEMappingURL)
+	r, err := httputil.GetWithUserAgent(cpeMapping)
 	if err != nil {
-		log.WithError(err).Error("Could not download RedHat's CVE mapping file")
+		log.WithError(err).Error("Could not download RedHat's CPE mapping file")
 		return resp, commonerr.ErrCouldNotDownload
 	}
 	defer r.Body.Close()
@@ -183,15 +157,26 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		return resp, commonerr.ErrCouldNotDownload
 	}
 
-	var cveCpeMapping Cvemap
-	if err := xml.NewDecoder(r.Body).Decode(&cveCpeMapping); err != nil {
-		return resp, err
-	}
+	cpeMappingBytes, _ := ioutil.ReadAll(r.Body)
+	cpeMappingData := string(cpeMappingBytes)
 
+	cpeMapping := parseCpeMapping(cpeMappingData)
+
+	advChan := make(chan Advisory, len(advisories))
+	vulnChan := make(chan []database.VulnerabilityWithAffected, len(advisories))
+	for i := 0; i < 20; i++ {
+		// parallel processing
+		go parseAdvisoryWorker(cpeMapping, advChan, vulnChan)
+	}
 	for _, advisory := range advisories {
-		vulnerabilities := parseAdvisory(advisory, cveCpeMapping)
+		advChan <- advisory
+	}
+	close(advChan)
+	for i := 0; i < len(advisories); i++ {
+		vulnerabilities := <-vulnChan
 		resp.Vulnerabilities = append(resp.Vulnerabilities, vulnerabilities...)
 	}
+	close(vulnChan)
 
 	if len(resp.Vulnerabilities) > 0 {
 		log.WithFields(log.Fields{
@@ -207,17 +192,70 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 }
 
-// parseAdvisory - parse advisory metadata and create new Vulnerabilities objects
-func parseAdvisory(advisory Advisory, cveCpeMapping Cvemap) (vulnerabilities []database.VulnerabilityWithAffected) {
-	for _, cve := range advisory.CveList {
-		namespace := "unknown"
-		var cveToCpe Vulnerability
-		for _, cveMappingItem := range cveCpeMapping.Vulnerability {
-			if cveMappingItem.Name == cve {
-				cveToCpe = cveMappingItem
-				break
-			}
+func parseAdvisoryWorker(cpeMapping []CpeMapping, advisory <-chan Advisory, vulnerabilities chan<- []database.VulnerabilityWithAffected) {
+	for adv := range advisory {
+		vuln := parseAdvisory(adv, cpeMapping)
+		vulnerabilities <- vuln
+	}
+}
+
+func parseCpeMapping(data string) []CpeMapping {
+	var cpeMapping []CpeMapping
+	lines := strings.Split(data, "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
 		}
+		// Format of line: RHSA-XXXX:YYYY CVE-XXXX-YY,CVE-XXXX-YZ CPE1,CPE2
+		fields := strings.Split(line, " ")
+		cpes := strings.Split(fields[2], ",")
+		packages := parseCpePackage(cpes, fields[0])
+		mappingItem := CpeMapping{
+			Advisory:     fields[0],
+			CVEs:         strings.Split(fields[1], ","),
+			PackageToCpe: packages,
+		}
+		cpeMapping = append(cpeMapping, mappingItem)
+	}
+	return cpeMapping
+
+}
+
+// parseCpePackage - parse package names from CPE string
+// example: cpe:/o:redhat:enterprise_linux:6::computenode/NetworkManager
+//    - source package: NetworkManager
+func parseCpePackage(cpes []string, advisory string) map[string][]string {
+	packageCpeMap := make(map[string][]string)
+
+	for _, cpe := range cpes {
+		if strings.Count(cpe, "/") == 1 || cpe == "" {
+			// text-only advisories
+			continue
+		}
+		separatorIndex := strings.LastIndex(cpe, "/")
+		packageName := cpe[separatorIndex+1:]
+		packageCpeMap[packageName] = append(packageCpeMap[packageName], cpe[:separatorIndex])
+	}
+	return packageCpeMap
+}
+
+// parseAdvisory - parse advisory metadata and create new Vulnerabilities objects
+func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities []database.VulnerabilityWithAffected) {
+	if len(advisory.PackageList) == 0 || len(advisory.CveList) == 0 {
+		// text-only advisories
+		return
+	}
+	advisoryMapping, err := findAdvisory(cpeMapping, advisory.Name)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"advisory": advisory.Name,
+			"updater":  "RedHat",
+		}).Debug("No CPE mapping for advisory")
+		return
+	}
+
+	for _, cve := range advisoryMapping.CVEs {
 		vulnerability := database.VulnerabilityWithAffected{
 			Vulnerability: database.Vulnerability{
 				Name:        cve,
@@ -226,35 +264,28 @@ func parseAdvisory(advisory Advisory, cveCpeMapping Cvemap) (vulnerabilities []d
 				Description: advisory.Description,
 			},
 		}
-		for _, nvra := range advisory.PackageList {
-			parsedNVRA := parseNVRA(nvra)
-			for _, cveAdvisory := range cveToCpe.AffectedRelease {
-				if cveAdvisory.Advisory.Text == advisory.Name && parsedNVRA.nvr() == cveAdvisory.Package.Text {
-					namespace = cveAdvisory.Cpe
-					break
-				}
-			}
-			// Once CPEs will be publicly available in RH's images we can use
-			// CPEs directly instead of centos:version
-			// To avoid false positives we need to filter only RHEL products
-			if strings.HasPrefix(namespace, "cpe:/o:redhat:enterprise_linux:7") {
-				namespace = "rhel:7"
-			} else if strings.HasPrefix(namespace, "cpe:/o:redhat:enterprise_linux:6") {
-				namespace = "rhel:6"
-			} else {
+		for _, nevra := range advisory.PackageList {
+			srpm := mapRpmToSrpm(nevra)
+			cpes, ok := advisoryMapping.PackageToCpe[srpm.Name]
+			if !ok {
 				continue
 			}
-			p := database.AffectedFeature{
-				FeatureName:     parsedNVRA.Name,
-				AffectedVersion: parsedNVRA.Version + "-" + parsedNVRA.Release,
-				FixedInVersion:  parsedNVRA.Version + "-" + parsedNVRA.Release,
-				AffectedType:    affectedType,
-				Namespace: database.Namespace{
-					Name:          namespace,
-					VersionFormat: rpm.ParserName,
-				},
+
+			rpmNevraObj := parseRpm(nevra)
+			for _, cpe := range cpes {
+				p := database.AffectedFeature{
+					FeatureName:     rpmNevraObj.Name,
+					AffectedVersion: rpmNevraObj.Version + "-" + rpmNevraObj.Release,
+					FixedInVersion:  rpmNevraObj.Version + "-" + rpmNevraObj.Release,
+					FeatureType:     affectedType,
+					Namespace: database.Namespace{
+						Name:          cpe,
+						VersionFormat: rpm.ParserName,
+					},
+				}
+				vulnerability.Affected = append(vulnerability.Affected, p)
 			}
-			vulnerability.Affected = append(vulnerability.Affected, p)
+
 		}
 		if len(vulnerability.Affected) > 0 {
 			vulnerabilities = append(vulnerabilities, vulnerability)
@@ -263,24 +294,106 @@ func parseAdvisory(advisory Advisory, cveCpeMapping Cvemap) (vulnerabilities []d
 	return
 }
 
-// parseNVRA - parse {name}-{version}-{release}.{arch}
-func parseNVRA(nvra string) NVRA {
-	var parsedNVRA NVRA
-	archIndex := strings.LastIndex(nvra, ".")
-	parsedNVRA.Arch = nvra[archIndex+1:]
-
-	releaseIndex := strings.LastIndex(nvra[:archIndex], "-")
-	parsedNVRA.Release = nvra[releaseIndex+1 : archIndex]
-
-	versionIndex := strings.LastIndex(nvra[:releaseIndex], "-")
-	parsedNVRA.Version = nvra[versionIndex+1 : releaseIndex]
-
-	parsedNVRA.Name = nvra[:versionIndex]
-
-	return parsedNVRA
+// findAdvisory in list of advisories based on name
+func findAdvisory(cpeMapping []CpeMapping, advisory string) (CpeMapping, error) {
+	for _, item := range cpeMapping {
+		if item.Advisory == advisory {
+			return item, nil
+		}
+	}
+	return CpeMapping{}, errors.New("No advisory in mapping file")
 }
-func (nvra *NVRA) nvr() string {
-	return nvra.Name + "-" + nvra.Version + "-" + nvra.Release
+
+// mapRpmToSrpm based on Brew data
+// Brew API is cached
+func mapRpmToSrpm(rpmNevra string) SRPM {
+	value, found := c.Get(rpmNevra)
+	if !found {
+		brew := brew.NewClient(brewHub)
+		rpmObj := parseRpm(rpmNevra)
+		rpmInfo := brew.GetRPMInfo(rpmObj.rpmName())
+		buildInfo := brew.GetBuildInfo(rpmInfo.BuildID)
+
+		srpm := toSRPM(buildInfo)
+		c.Set(rpmNevra, srpm, cache.DefaultExpiration)
+		return srpm
+	} else {
+		srpm := value.(SRPM)
+		return srpm
+	}
+
+}
+
+type NEVR struct {
+	Name    string
+	Epoch   *int
+	Version string
+	Release string
+}
+
+type RPM struct {
+	NEVR
+	Arch string
+}
+
+type SRPM struct {
+	NEVR
+}
+
+func (rpm *RPM) rpmName() string {
+	return fmt.Sprintf("%s-%s-%s.%s.rpm", rpm.Name, rpm.Version, rpm.Release, rpm.Arch)
+}
+
+func parseSrpm(name string) SRPM {
+	r := regexp.MustCompile(`(.*)-(([0-9]+):)?([^-]+)-([^-]+)`)
+	match := r.FindStringSubmatch(name)
+	srpm := SRPM{}
+	srpm.Name = match[1]
+	srpm.Version = match[4]
+	srpm.Release = match[5]
+
+	if match[3] != "" {
+		epoch, _ := strconv.Atoi(match[3])
+		srpm.Epoch = &epoch
+	}
+	return srpm
+}
+
+func parseRpm(name string) RPM {
+	r := regexp.MustCompile(`(.*)-(([0-9]+):)?([^-]+)-([^-]+)\.([a-z0-9_]+)`)
+	match := r.FindStringSubmatch(name)
+	rpm := RPM{}
+	rpm.Name = match[1]
+	rpm.Version = match[4]
+	rpm.Release = match[5]
+	rpm.Arch = match[6]
+	if match[3] != "" {
+		epoch, _ := strconv.Atoi(match[3])
+		rpm.Epoch = &epoch
+	}
+	return rpm
+}
+
+func toSRPM(buildInfo brew.BuildInfo) SRPM {
+	srpm := SRPM{}
+	srpm.Name = buildInfo.Name
+	srpm.Version = buildInfo.Version
+	srpm.Release = buildInfo.Release
+	srpm.Epoch = buildInfo.Epoch
+
+	return srpm
+}
+
+func (rpm *RPM) toNVRA() string {
+	return fmt.Sprintf("%s-%s-%s.%s", rpm.Name, rpm.Version, rpm.Release, rpm.Arch)
+}
+
+func (rpm *RPM) toNVR() string {
+	return fmt.Sprintf("%s-%s-%s", rpm.Name, rpm.Version, rpm.Release)
+}
+
+func (srpm *SRPM) toNVR() string {
+	return fmt.Sprintf("%s-%s-%s", srpm.Name, srpm.Version, srpm.Release)
 }
 
 func severity(sev string) database.Severity {
