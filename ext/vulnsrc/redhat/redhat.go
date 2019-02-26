@@ -88,6 +88,7 @@ type CpeMapping struct {
 type updater struct{}
 
 var c = cache.New(24*time.Hour, 30*time.Minute)
+var rpmToSrpmMapping = mapRpmToSrpm
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
@@ -265,7 +266,7 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 			},
 		}
 		for _, nevra := range advisory.PackageList {
-			srpm := mapRpmToSrpm(nevra)
+			srpm := rpmToSrpmMapping(nevra)
 			cpes, ok := advisoryMapping.PackageToCpe[srpm.Name]
 			if !ok {
 				continue
