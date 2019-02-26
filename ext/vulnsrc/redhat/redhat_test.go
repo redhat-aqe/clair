@@ -16,7 +16,8 @@ package redhat
 
 import (
 	"encoding/json"
-	"encoding/xml"
+	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,6 +27,12 @@ import (
 	"github.com/coreos/clair/ext/versionfmt/rpm"
 	"github.com/stretchr/testify/assert"
 )
+
+func mockRpmToSrpm(rpmNevra string) SRPM {
+	srpm := SRPM{}
+	srpm.Name = "tomcat7"
+	return srpm
+}
 
 func TestRedHatParserOneCVE(t *testing.T) {
 	_, filename, _, _ := runtime.Caller(0)
@@ -38,14 +45,13 @@ func TestRedHatParserOneCVE(t *testing.T) {
 		panic(err)
 	}
 
-	testFile2, _ := os.Open(filepath.Join(path, "/testdata/cvemap.xml"))
-	var cveCpeMapping Cvemap
-	if err := xml.NewDecoder(testFile2).Decode(&cveCpeMapping); err != nil {
-		panic(err)
-	}
+	testrhsacpedata, _ := ioutil.ReadFile(filepath.Join(path, "/testdata/rhsatocpe.txt"))
+	cpeMapping := parseCpeMapping(string(testrhsacpedata))
 	adv := rhsaData.ErrataList["RHSA-2019:0139"]
 	adv.Name = "RHSA-2019:0139"
-	vulnerabilities := parseAdvisory(adv, cveCpeMapping)
+	rpmToSrpmMapping = mockRpmToSrpm
+	vulnerabilities := parseAdvisory(adv, cpeMapping)
+	fmt.Println(vulnerabilities)
 	assert.Equal(t, "CVE-2017-2582", vulnerabilities[0].Name)
 	assert.Equal(t, "https://access.redhat.com/security/cve/CVE-2017-2582", vulnerabilities[0].Link)
 	assert.Equal(t, database.MediumSeverity, vulnerabilities[0].Severity)
@@ -53,9 +59,9 @@ func TestRedHatParserOneCVE(t *testing.T) {
 
 	expectedFeatures := []database.AffectedFeature{
 		{
-			AffectedType: affectedType,
+			FeatureType: affectedType,
 			Namespace: database.Namespace{
-				Name:          "rhel:6",
+				Name:          "cpe:/o:redhat:enterprise_linux:6::workstation",
 				VersionFormat: rpm.ParserName,
 			},
 			FeatureName:     "tomcat7-docs-webapp",
@@ -63,9 +69,29 @@ func TestRedHatParserOneCVE(t *testing.T) {
 			FixedInVersion:  "7.0.70-31.ep7.el6",
 		},
 		{
-			AffectedType: affectedType,
+			FeatureType: affectedType,
 			Namespace: database.Namespace{
-				Name:          "rhel:7",
+				Name:          "cpe:/o:redhat:enterprise_linux:7::workstation",
+				VersionFormat: rpm.ParserName,
+			},
+			FeatureName:     "tomcat7-docs-webapp",
+			AffectedVersion: "7.0.70-31.ep7.el6",
+			FixedInVersion:  "7.0.70-31.ep7.el6",
+		},
+		{
+			FeatureType: affectedType,
+			Namespace: database.Namespace{
+				Name:          "cpe:/o:redhat:enterprise_linux:6::workstation",
+				VersionFormat: rpm.ParserName,
+			},
+			FeatureName:     "tomcat7-selinux",
+			AffectedVersion: "7.0.70-31.ep7.el6",
+			FixedInVersion:  "7.0.70-31.ep7.el6",
+		},
+		{
+			FeatureType: affectedType,
+			Namespace: database.Namespace{
+				Name:          "cpe:/o:redhat:enterprise_linux:7::workstation",
 				VersionFormat: rpm.ParserName,
 			},
 			FeatureName:     "tomcat7-selinux",
