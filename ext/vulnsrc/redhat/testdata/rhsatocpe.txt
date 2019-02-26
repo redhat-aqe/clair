@@ -1,0 +1,1 @@
+RHSA-2019:0139 CVE-2017-2582 cpe:/o:redhat:enterprise_linux:6::workstation/tomcat7,cpe:/o:redhat:enterprise_linux:7::workstation/tomcat7
