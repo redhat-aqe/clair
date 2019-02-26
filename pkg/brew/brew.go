@@ -32,7 +32,7 @@ func NewClient(url string) (brew Brew) {
 func (brew *Brew) GetBuildInfo(nvr int) (result BuildInfo) {
 	value, found := c.Get(strconv.Itoa(nvr))
 	if !found {
-		err := brew.Client.Call("getBuild", nvr, &result)
+		err := brew.request("getBuild", nvr, &result)
 		if err != nil {
 			panic(err)
 		}
@@ -44,9 +44,23 @@ func (brew *Brew) GetBuildInfo(nvr int) (result BuildInfo) {
 
 // GetRPMInfo - returns metadata of given rpm object
 func (brew *Brew) GetRPMInfo(nvra string) (result RPMInfo) {
-	err := brew.Client.Call("getRPM", nvra, &result)
+	err := brew.request("getRPM", nvra, &result)
 	if err != nil {
 		panic(err)
 	}
 	return
+}
+
+func (brew *Brew) request(serviceMethod string, args interface{}, reply interface{}) interface{} {
+	var err interface{}
+	for i := 0; i < 3; i++ {
+		err = brew.Client.Call(serviceMethod, args, reply)
+		if err == nil {
+			return nil
+		}
+		// sleep and re-try
+		time.Sleep(100 * time.Millisecond)
+
+	}
+	panic(err)
 }
