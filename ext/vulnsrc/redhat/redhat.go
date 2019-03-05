@@ -45,7 +45,7 @@ const (
 	cveURL        = "https://access.redhat.com/security/cve/"
 	updaterFlag   = "redHatUpdater"
 	affectedType  = database.BinaryPackage
-	brewHub       = "https://brewhub.engineering.redhat.com/brewhub"
+	brewHub       = "http://brewhub.engineering.redhat.com/brewhub"
 )
 
 type Advisory struct {
