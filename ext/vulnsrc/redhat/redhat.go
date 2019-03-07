@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"os"
 
 	log "github.com/sirupsen/logrus"
 
@@ -40,8 +41,6 @@ import (
 
 const (
 	rhsaFirstTime = "2000-01-01T01:01:01+02:00"
-	vmaasURL      = "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1"
-	cpeMapping    = "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt"
 	cveURL        = "https://access.redhat.com/security/cve/"
 	updaterFlag   = "redHatUpdater"
 	affectedType  = database.BinaryPackage
@@ -90,8 +89,20 @@ type updater struct{}
 var c = cache.New(24*time.Hour, 30*time.Minute)
 var rpmToSrpmMapping = mapRpmToSrpm
 
+var vmaasURL = os.Getenv("VMAAS_URL")
+var cpeMapping = os.Getenv("CPE_MAPPING")
+
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
+	// set default values
+	if vmaasURL == "" {
+		vmaasURL = "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1"
+	}
+
+	if cpeMapping == "" {
+		cpeMapping = "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt"
+	}
+
 }
 
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
@@ -118,7 +129,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			Page:          currentPage,
 		}
 		// Fetch the update list.
-		advisoriesURL := vmaasURL + "/errata/"
+		advisoriesURL := vmaasURL + "/errata"
 		r, err := httputil.PostWithUserAgent(advisoriesURL, requestParames)
 		if err != nil {
 			log.WithError(err).Error("Could not download RedHat's update list")
