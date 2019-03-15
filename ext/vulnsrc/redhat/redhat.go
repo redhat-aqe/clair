@@ -268,12 +268,13 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 	}
 
 	for _, cve := range advisoryMapping.CVEs {
+		packageMap := make(map[string]bool)
 		vulnerability := database.VulnerabilityWithAffected{
 			Vulnerability: database.Vulnerability{
 				Name:        cve,
 				Link:        cveURL + cve,
 				Severity:    severity(advisory.Severity),
-				Description: advisory.Description,
+				Description: advisory.Name + " - " + advisory.Description,
 			},
 		}
 		for _, nevra := range advisory.PackageList {
@@ -285,16 +286,25 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 
 			rpmNevraObj := parseRpm(nevra)
 			for _, cpe := range cpes {
+				epochVersionRelease := rpmNevraObj.EpochVersionRelease()
+				key := rpmNevraObj.Name + epochVersionRelease + cpe
+				ok := packageMap[key]
+				if ok {
+					// filter out duplicated features (arch specific)
+					continue
+				}
 				p := database.AffectedFeature{
 					FeatureName:     rpmNevraObj.Name,
-					AffectedVersion: rpmNevraObj.Version + "-" + rpmNevraObj.Release,
-					FixedInVersion:  rpmNevraObj.Version + "-" + rpmNevraObj.Release,
+					AffectedVersion: epochVersionRelease,
+					FixedInVersion:  epochVersionRelease,
 					FeatureType:     affectedType,
 					Namespace: database.Namespace{
 						Name:          cpe,
 						VersionFormat: rpm.ParserName,
 					},
 				}
+
+				packageMap[key] = true
 				vulnerability.Affected = append(vulnerability.Affected, p)
 			}
 
@@ -384,6 +394,13 @@ func parseRpm(name string) RPM {
 		rpm.Epoch = &epoch
 	}
 	return rpm
+}
+
+func (rpm *RPM) EpochVersionRelease() string {
+	if rpm.Epoch != nil {
+		return fmt.Sprintf("%d:%s-%s", *rpm.Epoch, rpm.Version, rpm.Release)
+	}
+	return fmt.Sprintf("%s-%s", rpm.Version, rpm.Release)
 }
 
 func toSRPM(buildInfo brew.BuildInfo) SRPM {
