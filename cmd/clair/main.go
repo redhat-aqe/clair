@@ -39,24 +39,13 @@ import (
 	_ "github.com/coreos/clair/database/pgsql"
 
 	// Register extensions.
-	_ "github.com/coreos/clair/ext/featurefmt/apk"
-	_ "github.com/coreos/clair/ext/featurefmt/dpkg"
-	_ "github.com/coreos/clair/ext/featurefmt/rpm"
-	_ "github.com/coreos/clair/ext/featurens/alpinerelease"
-	_ "github.com/coreos/clair/ext/featurens/aptsources"
-	_ "github.com/coreos/clair/ext/featurens/lsbrelease"
-	_ "github.com/coreos/clair/ext/featurens/osrelease"
+	_ "github.com/coreos/clair/ext/featurefmt/redhat"
 	_ "github.com/coreos/clair/ext/featurens/redhatrelease"
 	_ "github.com/coreos/clair/ext/imagefmt/aci"
 	_ "github.com/coreos/clair/ext/imagefmt/docker"
 	_ "github.com/coreos/clair/ext/notification/webhook"
 	_ "github.com/coreos/clair/ext/vulnmdsrc/nvd"
-	_ "github.com/coreos/clair/ext/vulnsrc/alpine"
-	_ "github.com/coreos/clair/ext/vulnsrc/debian"
-	_ "github.com/coreos/clair/ext/vulnsrc/oracle"
 	_ "github.com/coreos/clair/ext/vulnsrc/redhat"
-	_ "github.com/coreos/clair/ext/vulnsrc/suse"
-	_ "github.com/coreos/clair/ext/vulnsrc/ubuntu"
 )
 
 // MaxDBConnectionAttempts is the total number of tries that Clair will use to
