@@ -83,6 +83,7 @@ func (s *AncestryServer) PostAncestry(ctx context.Context, req *pb.PostAncestryR
 	}
 
 	builder := clair.NewAncestryBuilder(clair.EnabledDetectors())
+	layers := make([]*database.Layer, 0, len(req.Layers))
 	for _, layer := range req.Layers {
 		if layer == nil {
 			err := status.Error(codes.InvalidArgument, "ancestry layer is invalid")
@@ -107,8 +108,11 @@ func (s *AncestryServer) PostAncestry(ctx context.Context, req *pb.PostAncestryR
 		if err != nil {
 			return nil, newRPCErrorWithClairError(codes.Internal, err)
 		}
+		layers = append(layers, clairLayer)
 
-		builder.AddLeafLayer(clairLayer)
+	}
+	for i := len(layers) - 1; i >= 0; i-- {
+		builder.AddLeafLayer(layers[i])
 	}
 
 	if err := clair.SaveAncestry(s.Store, builder.Ancestry(req.AncestryName)); err != nil {
