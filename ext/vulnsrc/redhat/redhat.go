@@ -22,11 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"os"
 
 	log "github.com/sirupsen/logrus"
 
@@ -40,11 +41,12 @@ import (
 )
 
 const (
-	rhsaFirstTime = "2000-01-01T01:01:01+02:00"
-	cveURL        = "https://access.redhat.com/security/cve/"
-	updaterFlag   = "redHatUpdater"
-	affectedType  = database.BinaryPackage
-	brewHub       = "http://brewhub.engineering.redhat.com/brewhub"
+	rhsaFirstTime     = "2000-01-01T01:01:01+02:00"
+	cveURL            = "https://access.redhat.com/security/cve/"
+	updaterFlag       = "redHatUpdater"
+	additionalAdvFlag = "vmasAdditionalAdv"
+	affectedType      = database.BinaryPackage
+	brewHub           = "http://brewhub.engineering.redhat.com/brewhub"
 )
 
 type Advisory struct {
@@ -89,42 +91,174 @@ type updater struct{}
 var c = cache.New(24*time.Hour, 30*time.Minute)
 var rpmToSrpmMapping = mapRpmToSrpm
 
-var vmaasURL = os.Getenv("VMAAS_URL")
-var cpeMapping = os.Getenv("CPE_MAPPING")
+var vmaasURL = getEnv("VMAAS_URL", "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1")
+var cpeMappingURL = getEnv("CPE_MAPPING", "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt")
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
-	// set default values
-	if vmaasURL == "" {
-		vmaasURL = "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1"
-	}
-
-	if cpeMapping == "" {
-		cpeMapping = "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt"
-	}
-
 }
 
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
-	// Get the timestamp from last scan
-	flagValue, ok, err := database.FindKeyValueAndRollback(datastore, updaterFlag)
+	timeNow := time.Now()
+	newTime := timeNow.Format(time.RFC3339)
+	// rhsaSince - last time when security data was fetched from VMaaS
+	// additionalAdv - list of advisories which have been missing in CPE
+	// mapping file in previous run
+	rhsaSince, additionalAdv, err := findKeyValue(datastore)
 	if err != nil {
 		return resp, err
 	}
-	timeNow := time.Now()
-	newTime := timeNow.Format(time.RFC3339)
-	rhsaSince := rhsaFirstTime
-	if ok {
-		rhsaSince = flagValue
-	}
-	currentPage := 1
-	var advisories []Advisory
 
+	// this file provides mapping between advisory and CPEs
+	cpeMapping, err := getAdvisory2CpeMapping()
+	if err != nil {
+		return resp, err
+	}
+
+	allAdvisories, err := getAdvisories(rhsaSince, additionalAdv)
+	additionalAdv = []string{}
+	advisories := []Advisory{}
+	for _, adv := range allAdvisories {
+		if len(adv.PackageList) == 0 || len(adv.CveList) == 0 {
+			log.WithField("Advisory", adv.Name).Debug("No packages or CVEs in advisory. Skipping...")
+			continue
+		}
+		_, err := findAdvisory(cpeMapping, adv.Name)
+		if err != nil {
+			// The advisory is missing in mapping file.
+			// The missing advisory will be stored in database and refreshed next time.
+			additionalAdv = append(additionalAdv, adv.Name)
+
+		} else {
+			advisories = append(advisories, adv)
+		}
+
+	}
+	log.WithFields(log.Fields{
+		"items":   len(advisories),
+		"updater": "RedHat",
+	}).Debug("Start processing advisories")
+	advChan := make(chan Advisory, len(advisories))
+	vulnChan := make(chan []database.VulnerabilityWithAffected, len(advisories))
+	for i := 0; i < 20; i++ {
+		// parallel processing
+		go parseAdvisoryWorker(cpeMapping, advChan, vulnChan)
+	}
+
+	// sort advisories to make processing faster
+	sort.Slice(advisories, func(i, j int) bool {
+		return len(advisories[i].PackageList)+len(advisories[i].CveList) > len(advisories[j].PackageList)+len(advisories[j].CveList)
+	})
+	for _, advisory := range advisories {
+		advChan <- advisory
+	}
+	close(advChan)
+	for i := 0; i < len(advisories); i++ {
+		vulnerabilities := <-vulnChan
+		resp.Vulnerabilities = append(resp.Vulnerabilities, vulnerabilities...)
+	}
+	close(vulnChan)
+
+	log.WithFields(log.Fields{
+		"items":          len(resp.Vulnerabilities),
+		"updater":        "RedHat",
+		"newUpdaterTime": newTime,
+		"missingMapping": additionalAdv,
+	}).Debug("Found new vulnerabilities")
+
+	// save new timestamp to database
+	resp.Flags = make(map[string]string)
+	resp.Flags[updaterFlag] = newTime
+	resp.Flags["vmasAddionalAdv"] = strings.Join(additionalAdv, ",")
+	return resp, nil
+
+}
+
+func findKeyValue(datastore database.Datastore) (rhsaSince string, additionalAdvSlice []string, err error) {
+	// Get the timestamp from last scan
+	rhsaSince, ok, err := database.FindKeyValueAndRollback(datastore, updaterFlag)
+	if err != nil {
+		return "", []string{}, err
+	}
+
+	if !ok {
+		rhsaSince = rhsaFirstTime
+	}
+
+	additionalAdv, ok, err := database.FindKeyValueAndRollback(datastore, additionalAdvFlag)
+	if err != nil {
+		return "", []string{}, err
+	}
+	if additionalAdv != "" {
+		additionalAdvSlice = strings.Split(additionalAdv, ",")
+	}
+	return rhsaSince, additionalAdvSlice, nil
+}
+
+func getAdvisory2CpeMapping() (cpeMapping []CpeMapping, err error) {
+	r, err := httputil.GetWithUserAgent(cpeMappingURL)
+	if err != nil {
+		log.WithError(err).Error("Could not download RedHat's CPE mapping file")
+		return cpeMapping, commonerr.ErrCouldNotDownload
+	}
+	defer r.Body.Close()
+
+	if !httputil.Status2xx(r) {
+		log.WithField("StatusCode", r.StatusCode).Error("Failed to update RedHat")
+		return cpeMapping, commonerr.ErrCouldNotDownload
+	}
+
+	cpeMappingBytes, _ := ioutil.ReadAll(r.Body)
+	cpeMappingData := string(cpeMappingBytes)
+
+	cpeMapping = parseCpeMapping(cpeMappingData)
+	return
+}
+
+func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories []Advisory, err error) {
+
+	// First fetch advisories which have been published since last update
+	regularAdvUpdate, err := vmaasAdvisoryRequest([]string{"RHSA-.*"}, rhsaSince)
+	if err != nil {
+		return
+	}
+	if len(additionalAdvisories) == 0 {
+		return regularAdvUpdate, nil
+	}
+	// Now fetch advisories which have been missing in cpe mapping during previous update
+	log.WithField("Advisories", additionalAdvisories).Debug("Requesting additional advisories")
+	additionalUpdate, err := vmaasAdvisoryRequest(additionalAdvisories, rhsaFirstTime)
+	if err != nil {
+		return
+	}
+	allAdvNames := make(map[string]bool)
+	for _, adv := range regularAdvUpdate {
+		advisories = append(advisories, adv)
+		allAdvNames[adv.Name] = true
+	}
+	for _, adv := range additionalUpdate {
+		if _, ok := allAdvNames[adv.Name]; !ok {
+			advisories = append(advisories, adv)
+			allAdvNames[adv.Name] = true
+		}
+	}
+	return advisories, nil
+}
+
+func vmaasAdvisoryRequest(advList []string, rhsaSince string) (advisories []Advisory, err error) {
+	currentPage := 1
 	for {
 		requestParames := VmaasPostRequest{
-			ErrataList:    []string{"RHSA-.*"},
+			ErrataList:    advList,
 			ModifiedSince: rhsaSince,
 			Page:          currentPage,
 		}
@@ -133,18 +267,18 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		r, err := httputil.PostWithUserAgent(advisoriesURL, requestParames)
 		if err != nil {
 			log.WithError(err).Error("Could not download RedHat's update list")
-			return resp, commonerr.ErrCouldNotDownload
+			return advisories, commonerr.ErrCouldNotDownload
 		}
 		defer r.Body.Close()
 
 		if !httputil.Status2xx(r) {
 			log.WithField("StatusCode", r.StatusCode).Error("Failed to update RedHat")
-			return resp, commonerr.ErrCouldNotDownload
+			return advisories, commonerr.ErrCouldNotDownload
 		}
 
 		var rhsaData RHSAdata
 		if err := json.NewDecoder(r.Body).Decode(&rhsaData); err != nil {
-			return resp, err
+			return advisories, err
 		}
 		for advisoryName, advisory := range rhsaData.ErrataList {
 			advisory.Name = advisoryName
@@ -156,52 +290,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			break
 		}
 	}
-
-	r, err := httputil.GetWithUserAgent(cpeMapping)
-	if err != nil {
-		log.WithError(err).Error("Could not download RedHat's CPE mapping file")
-		return resp, commonerr.ErrCouldNotDownload
-	}
-	defer r.Body.Close()
-
-	if !httputil.Status2xx(r) {
-		log.WithField("StatusCode", r.StatusCode).Error("Failed to update RedHat")
-		return resp, commonerr.ErrCouldNotDownload
-	}
-
-	cpeMappingBytes, _ := ioutil.ReadAll(r.Body)
-	cpeMappingData := string(cpeMappingBytes)
-
-	cpeMapping := parseCpeMapping(cpeMappingData)
-
-	advChan := make(chan Advisory, len(advisories))
-	vulnChan := make(chan []database.VulnerabilityWithAffected, len(advisories))
-	for i := 0; i < 20; i++ {
-		// parallel processing
-		go parseAdvisoryWorker(cpeMapping, advChan, vulnChan)
-	}
-	for _, advisory := range advisories {
-		advChan <- advisory
-	}
-	close(advChan)
-	for i := 0; i < len(advisories); i++ {
-		vulnerabilities := <-vulnChan
-		resp.Vulnerabilities = append(resp.Vulnerabilities, vulnerabilities...)
-	}
-	close(vulnChan)
-
-	if len(resp.Vulnerabilities) > 0 {
-		log.WithFields(log.Fields{
-			"items":   len(resp.Vulnerabilities),
-			"updater": "RedHat",
-		}).Debug("Found new vulnerabilities")
-	}
-
-	// save new timestamp to database
-	resp.FlagName = updaterFlag
-	resp.FlagValue = newTime
-	return resp, nil
-
+	return advisories, nil
 }
 
 func parseAdvisoryWorker(cpeMapping []CpeMapping, advisory <-chan Advisory, vulnerabilities chan<- []database.VulnerabilityWithAffected) {
@@ -278,13 +367,17 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 			},
 		}
 		for _, nevra := range advisory.PackageList {
+			rpmNevraObj := parseRpm(nevra)
+			if rpmNevraObj.Arch != "x86_64" && rpmNevraObj.Arch != "noarch" {
+				continue
+			}
+
 			srpm := rpmToSrpmMapping(nevra)
 			cpes, ok := advisoryMapping.PackageToCpe[srpm.Name]
 			if !ok {
 				continue
 			}
 
-			rpmNevraObj := parseRpm(nevra)
 			for _, cpe := range cpes {
 				epochVersionRelease := rpmNevraObj.EpochVersionRelease()
 				key := rpmNevraObj.Name + epochVersionRelease + cpe
