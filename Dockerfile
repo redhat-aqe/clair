@@ -23,8 +23,10 @@ FROM alpine:3.8
 COPY --from=build /go/src/github.com/coreos/clair/clair /clair
 RUN apk add --no-cache git rpm xz ca-certificates dumb-init
 
-RUN chgrp -R 0 /etc/ssl/certs
-RUN chmod -R g=u /etc/ssl/certs
+RUN mkdir /etc/clair
+
+RUN chgrp -R 0 /etc/ssl/certs /etc/clair
+RUN chmod -R g=u /etc/ssl/certs /etc/clair
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/clair"]
 VOLUME /config
