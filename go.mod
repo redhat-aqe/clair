@@ -10,6 +10,7 @@ replace (
 
 require (
 	github.com/PuerkitoBio/goquery v1.5.1
+	github.com/Shopify/sarama v1.26.4 // indirect
 	github.com/asottile/dockerfile v2.2.0+incompatible
 	github.com/buildkite/interpolate v0.0.0-20181028012610-973457fa2b4c
 	github.com/coreos/clair v1.2.6
@@ -18,7 +19,6 @@ require (
 	github.com/fernet/fernet-go v0.0.0-20151007213151-1b2437bc582b
 	github.com/go-stomp/stomp v2.0.6+incompatible
 	github.com/golang/protobuf v1.2.0
-	github.com/google/go-cmp v0.3.0 // indirect
 	github.com/google/uuid v1.1.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20170330212424-2500245aa611
 	github.com/grpc-ecosystem/grpc-gateway v1.2.3-0.20170531022852-2a40dd79571b
@@ -33,12 +33,13 @@ require (
 	github.com/remind101/migrate v0.0.0-20160423010909-d22d647232c2
 	github.com/sirupsen/logrus v1.4.1
 	github.com/soheilhy/cmux v0.1.4
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.4.0
+	github.com/tracer0tong/kafkalogrus v0.0.0-20180816014403-290bb4d4d549
 	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
 	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/tools v0.0.0-20200601175630-2caf76543d99 // indirect
 	google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
 	google.golang.org/grpc v1.23.0
-	gopkg.in/yaml.v2 v2.2.2
+	gopkg.in/yaml.v2 v2.2.8
 )
