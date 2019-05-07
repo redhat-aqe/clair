@@ -178,7 +178,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	// save new timestamp to database
 	resp.Flags = make(map[string]string)
 	resp.Flags[updaterFlag] = newTime
-	resp.Flags["vmasAddionalAdv"] = strings.Join(additionalAdv, ",")
+	resp.Flags[additionalAdvFlag] = strings.Join(additionalAdv, ",")
 	return resp, nil
 
 }
