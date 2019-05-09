@@ -108,8 +108,7 @@ func init() {
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
-	timeNow := time.Now()
-	newTime := timeNow.Format(time.RFC3339)
+	newTime := time.Now().UTC().Format(time.RFC3339)
 	// rhsaSince - last time when security data was fetched from VMaaS
 	// additionalAdv - list of advisories which have been missing in CPE
 	// mapping file in previous run
@@ -125,6 +124,9 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	}
 
 	allAdvisories, err := getAdvisories(rhsaSince, additionalAdv)
+	if err != nil {
+		return resp, err
+	}
 	additionalAdv = []string{}
 	advisories := []Advisory{}
 	for _, adv := range allAdvisories {
@@ -137,6 +139,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			// The advisory is missing in mapping file.
 			// The missing advisory will be stored in database and refreshed next time.
 			additionalAdv = append(additionalAdv, adv.Name)
+			log.WithField("Advisory", adv.Name).Debug("The advisory is not available in CPE mapping file.")
 
 		} else {
 			advisories = append(advisories, adv)
@@ -231,6 +234,7 @@ func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories 
 	if err != nil {
 		return
 	}
+	log.WithField("items", len(regularAdvUpdate)).Debug("Found advisories in regular update.")
 	if len(additionalAdvisories) == 0 {
 		return regularAdvUpdate, nil
 	}
@@ -240,6 +244,7 @@ func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories 
 	if err != nil {
 		return
 	}
+	log.WithField("items", len(additionalUpdate)).Debug("Found advisories in additional update.")
 	allAdvNames := make(map[string]bool)
 	for _, adv := range regularAdvUpdate {
 		advisories = append(advisories, adv)
@@ -257,14 +262,17 @@ func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories 
 func vmaasAdvisoryRequest(advList []string, rhsaSince string) (advisories []Advisory, err error) {
 	currentPage := 1
 	for {
-		requestParames := VmaasPostRequest{
+		requestParams := VmaasPostRequest{
 			ErrataList:    advList,
 			ModifiedSince: rhsaSince,
 			Page:          currentPage,
 		}
+		log.WithFields(log.Fields{
+			"json": requestParams,
+		}).Debug("Requesting data from VMaaS")
 		// Fetch the update list.
 		advisoriesURL := vmaasURL + "/errata"
-		r, err := httputil.PostWithUserAgent(advisoriesURL, requestParames)
+		r, err := httputil.PostWithUserAgent(advisoriesURL, requestParams)
 		if err != nil {
 			log.WithError(err).Error("Could not download RedHat's update list")
 			return advisories, commonerr.ErrCouldNotDownload
