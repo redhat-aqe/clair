@@ -41,13 +41,14 @@ import (
 )
 
 const (
-	rhsaFirstTime     = "2000-01-01T01:01:01+02:00"
 	cveURL            = "https://access.redhat.com/security/cve/"
 	updaterFlag       = "redHatUpdater"
 	additionalAdvFlag = "vmasAdditionalAdv"
 	affectedType      = database.BinaryPackage
 	brewHub           = "http://brewhub.engineering.redhat.com/brewhub"
 )
+
+var rhsaFirstTime = time.Date(2000, 1, 1, 1, 1, 1, 0, time.UTC)
 
 type Advisory struct {
 	Name          string    `json:"name"`
@@ -108,11 +109,10 @@ func init() {
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
-	newTime := time.Now().UTC().Format(time.RFC3339)
 	// rhsaSince - last time when security data was fetched from VMaaS
 	// additionalAdv - list of advisories which have been missing in CPE
 	// mapping file in previous run
-	rhsaSince, additionalAdv, err := findKeyValue(datastore)
+	lastAdvIssued, additionalAdv, err := findKeyValue(datastore)
 	if err != nil {
 		return resp, err
 	}
@@ -123,9 +123,13 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		return resp, err
 	}
 
-	allAdvisories, err := getAdvisories(rhsaSince, additionalAdv)
+	allAdvisories, err := getAdvisories(lastAdvIssued, additionalAdv)
 	if err != nil {
 		return resp, err
+	}
+	newLastAdvIssued := lastAdvIssued
+	if len(allAdvisories) > 0 {
+		newLastAdvIssued = allAdvisories[0].Issued
 	}
 	additionalAdv = []string{}
 	advisories := []Advisory{}
@@ -174,37 +178,39 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	log.WithFields(log.Fields{
 		"items":          len(resp.Vulnerabilities),
 		"updater":        "RedHat",
-		"newUpdaterTime": newTime,
+		"newUpdaterTime": newLastAdvIssued,
 		"missingMapping": additionalAdv,
 	}).Debug("Found new vulnerabilities")
 
 	// save new timestamp to database
 	resp.Flags = make(map[string]string)
-	resp.Flags[updaterFlag] = newTime
+	resp.Flags[updaterFlag] = newLastAdvIssued.Format(time.RFC3339)
 	resp.Flags[additionalAdvFlag] = strings.Join(additionalAdv, ",")
 	return resp, nil
 
 }
 
-func findKeyValue(datastore database.Datastore) (rhsaSince string, additionalAdvSlice []string, err error) {
+func findKeyValue(datastore database.Datastore) (lastAdvIssued time.Time, additionalAdvSlice []string, err error) {
 	// Get the timestamp from last scan
-	rhsaSince, ok, err := database.FindKeyValueAndRollback(datastore, updaterFlag)
+	rhsaSinceStr, ok, err := database.FindKeyValueAndRollback(datastore, updaterFlag)
 	if err != nil {
-		return "", []string{}, err
+		return time.Time{}, []string{}, err
 	}
 
 	if !ok {
-		rhsaSince = rhsaFirstTime
+		lastAdvIssued = rhsaFirstTime
+	} else {
+		lastAdvIssued, _ = time.Parse(time.RFC3339, rhsaSinceStr)
 	}
 
 	additionalAdv, ok, err := database.FindKeyValueAndRollback(datastore, additionalAdvFlag)
 	if err != nil {
-		return "", []string{}, err
+		return time.Time{}, []string{}, err
 	}
 	if additionalAdv != "" {
 		additionalAdvSlice = strings.Split(additionalAdv, ",")
 	}
-	return rhsaSince, additionalAdvSlice, nil
+	return lastAdvIssued, additionalAdvSlice, nil
 }
 
 func getAdvisory2CpeMapping() (cpeMapping []CpeMapping, err error) {
@@ -227,24 +233,23 @@ func getAdvisory2CpeMapping() (cpeMapping []CpeMapping, err error) {
 	return
 }
 
-func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories []Advisory, err error) {
-
+func getAdvisories(lastAdvIssued time.Time, additionalAdvisories []string) (advisories []Advisory, err error) {
 	// First fetch advisories which have been published since last update
-	regularAdvUpdate, err := vmaasAdvisoryRequest([]string{"RHSA-.*"}, rhsaSince)
+	regularAdvUpdate, err := vmaasAdvisoryRequest([]string{"RHSA-.*"}, lastAdvIssued)
 	if err != nil {
 		return
 	}
 	log.WithField("items", len(regularAdvUpdate)).Debug("Found advisories in regular update.")
-	if len(additionalAdvisories) == 0 {
-		return regularAdvUpdate, nil
+	var additionalUpdate []Advisory
+	if len(additionalAdvisories) != 0 {
+		// Now fetch advisories which have been missing in cpe mapping during previous update
+		log.WithField("Advisories", additionalAdvisories).Debug("Requesting additional advisories")
+		additionalUpdate, err = vmaasAdvisoryRequest(additionalAdvisories, rhsaFirstTime)
+		if err != nil {
+			return advisories, err
+		}
+		log.WithField("items", len(additionalUpdate)).Debug("Found advisories in additional update.")
 	}
-	// Now fetch advisories which have been missing in cpe mapping during previous update
-	log.WithField("Advisories", additionalAdvisories).Debug("Requesting additional advisories")
-	additionalUpdate, err := vmaasAdvisoryRequest(additionalAdvisories, rhsaFirstTime)
-	if err != nil {
-		return
-	}
-	log.WithField("items", len(additionalUpdate)).Debug("Found advisories in additional update.")
 	allAdvNames := make(map[string]bool)
 	for _, adv := range regularAdvUpdate {
 		advisories = append(advisories, adv)
@@ -256,15 +261,21 @@ func getAdvisories(rhsaSince string, additionalAdvisories []string) (advisories 
 			allAdvNames[adv.Name] = true
 		}
 	}
+	// sort advisories by issued date
+	sort.Slice(advisories, func(i, j int) bool {
+		return advisories[i].Issued.After(advisories[j].Issued)
+	})
 	return advisories, nil
 }
 
-func vmaasAdvisoryRequest(advList []string, rhsaSince string) (advisories []Advisory, err error) {
+func vmaasAdvisoryRequest(advList []string, lastAdvIssued time.Time) (advisories []Advisory, err error) {
 	currentPage := 1
 	for {
+		// VMaaS publishes new data every N hours - adding 24 hours to query
+		// should prevent advisories to be lost
 		requestParams := VmaasPostRequest{
 			ErrataList:    advList,
-			ModifiedSince: rhsaSince,
+			ModifiedSince: lastAdvIssued.Add(-24 * time.Hour).Format(time.RFC3339),
 			Page:          currentPage,
 		}
 		log.WithFields(log.Fields{
@@ -288,9 +299,12 @@ func vmaasAdvisoryRequest(advList []string, rhsaSince string) (advisories []Advi
 		if err := json.NewDecoder(r.Body).Decode(&rhsaData); err != nil {
 			return advisories, err
 		}
+
 		for advisoryName, advisory := range rhsaData.ErrataList {
-			advisory.Name = advisoryName
-			advisories = append(advisories, advisory)
+			if lastAdvIssued.Before(advisory.Issued) {
+				advisory.Name = advisoryName
+				advisories = append(advisories, advisory)
+			}
 		}
 		currentPage++
 		if rhsaData.Page == rhsaData.Pages || rhsaData.Pages == 0 {
