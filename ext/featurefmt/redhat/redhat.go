@@ -253,8 +253,11 @@ func getPotentialNamespace(files tarutil.FilesMap) (namespaces []database.Namesp
 		previousNVR = ""
 		previousArch = ""
 	}
-
+	if nvr == "" || arch == ""{
+		return
+	}
 	cpes := getCPEs(nvr, arch)
+	log.WithField("cpes", cpes).Debug("Found CPEs for given layer")
 	fmt.Println(cpes)
 	for _, cpe := range cpes {
 		namespace := database.Namespace{
