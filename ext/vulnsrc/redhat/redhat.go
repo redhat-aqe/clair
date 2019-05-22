@@ -382,10 +382,10 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 		packageMap := make(map[string]bool)
 		vulnerability := database.VulnerabilityWithAffected{
 			Vulnerability: database.Vulnerability{
-				Name:        cve,
+				Name:        cve + " - " + advisory.Name,
 				Link:        cveURL + cve,
 				Severity:    severity(advisory.Severity),
-				Description: advisory.Name + " - " + advisory.Description,
+				Description: advisory.Description,
 			},
 		}
 		for _, nevra := range advisory.PackageList {
