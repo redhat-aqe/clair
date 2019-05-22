@@ -52,10 +52,10 @@ func TestRedHatParserOneCVE(t *testing.T) {
 	rpmToSrpmMapping = mockRpmToSrpm
 	vulnerabilities := parseAdvisory(adv, cpeMapping)
 	fmt.Println(vulnerabilities)
-	assert.Equal(t, "CVE-2017-2582", vulnerabilities[0].Name)
+	assert.Equal(t, "CVE-2017-2582 - RHSA-2019:0139", vulnerabilities[0].Name)
 	assert.Equal(t, "https://access.redhat.com/security/cve/CVE-2017-2582", vulnerabilities[0].Link)
 	assert.Equal(t, database.MediumSeverity, vulnerabilities[0].Severity)
-	assert.Equal(t, "RHSA-2019:0139 - Red Hat JBoss Enterprise Application Platform is a platform for Java applications based on the JBoss Application Server.\n\nThis release serves as a replacement for Red Hat JBoss Enterprise Application Platform 7.1, and includes bug fixes and enhancements. Refer to the Red Hat JBoss Enterprise Application Platform 7.2.0 Release Notes for information on the most significant bug fixes and enhancements included in this release.\n\nSecurity Fix(es):\n\n* picketlink: SAML request parser replaces special strings with system properties (CVE-2017-2582)\n\nFor more details about the security issue(s), including the impact, a CVSS\nscore, and other related information, refer to the CVE page(s) listed in\nthe References section.\n\nThe CVE-2017-2582 issue was discovered by Hynek Mlnarik (Red Hat).", vulnerabilities[0].Description)
+	assert.Equal(t, "Red Hat JBoss Enterprise Application Platform is a platform for Java applications based on the JBoss Application Server.\n\nThis release serves as a replacement for Red Hat JBoss Enterprise Application Platform 7.1, and includes bug fixes and enhancements. Refer to the Red Hat JBoss Enterprise Application Platform 7.2.0 Release Notes for information on the most significant bug fixes and enhancements included in this release.\n\nSecurity Fix(es):\n\n* picketlink: SAML request parser replaces special strings with system properties (CVE-2017-2582)\n\nFor more details about the security issue(s), including the impact, a CVSS\nscore, and other related information, refer to the CVE page(s) listed in\nthe References section.\n\nThe CVE-2017-2582 issue was discovered by Hynek Mlnarik (Red Hat).", vulnerabilities[0].Description)
 
 	expectedFeatures := []database.AffectedFeature{
 		{
