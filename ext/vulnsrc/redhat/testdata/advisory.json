@@ -10,7 +10,7 @@
             "description": "Red Hat JBoss Enterprise Application Platform is a platform for Java applications based on the JBoss Application Server.\n\nThis release serves as a replacement for Red Hat JBoss Enterprise Application Platform 7.1, and includes bug fixes and enhancements. Refer to the Red Hat JBoss Enterprise Application Platform 7.2.0 Release Notes for information on the most significant bug fixes and enhancements included in this release.\n\nSecurity Fix(es):\n\n* picketlink: SAML request parser replaces special strings with system properties (CVE-2017-2582)\n\nFor more details about the security issue(s), including the impact, a CVSS\nscore, and other related information, refer to the CVE page(s) listed in\nthe References section.\n\nThe CVE-2017-2582 issue was discovered by Hynek Mlnarik (Red Hat).",
             "issued": "2019-01-22T16:22:20+00:00",
             "package_list": [
-                "tomcat7-docs-webapp-7.0.70-31.ep7.el6.noarch",
+                "tomcat7-docs-webapp-7.0.70-31.ep7.el7.noarch",
                 "tomcat7-selinux-7.0.70-31.ep7.el6.noarch"
             ],
             "reference_list": [

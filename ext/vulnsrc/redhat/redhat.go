@@ -19,10 +19,7 @@ package redhat
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -30,14 +27,13 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
-
 	"github.com/coreos/clair/database"
 	"github.com/coreos/clair/ext/versionfmt/rpm"
 	"github.com/coreos/clair/ext/vulnsrc"
-	"github.com/coreos/clair/pkg/brew"
 	"github.com/coreos/clair/pkg/commonerr"
+	"github.com/coreos/clair/pkg/errata"
 	"github.com/coreos/clair/pkg/httputil"
-	"github.com/patrickmn/go-cache"
+	"github.com/coreos/clair/pkg/envutil"
 )
 
 const (
@@ -45,11 +41,11 @@ const (
 	updaterFlag       = "redHatUpdater"
 	additionalAdvFlag = "vmasAdditionalAdv"
 	affectedType      = database.BinaryPackage
-	brewHub           = "http://brewhub.engineering.redhat.com/brewhub"
 )
 
 var rhsaFirstTime = time.Date(2000, 1, 1, 1, 1, 1, 0, time.UTC)
 
+// Advisory is struct for VMaaS advisory
 type Advisory struct {
 	Name          string    `json:"name"`
 	Synopsis      string    `json:"synopsis"`
@@ -67,6 +63,7 @@ type Advisory struct {
 	URL           string    `json:"url"`
 }
 
+// RHSAdata is struct for VMaaS advisory response
 type RHSAdata struct {
 	ErrataList    map[string]Advisory `json:"errata_list"`
 	Page          int                 `json:"page"`
@@ -75,35 +72,23 @@ type RHSAdata struct {
 	ModifiedSince string              `json:"modified_since"`
 }
 
+// VmaasPostRequest is struct for VMaaS post request
 type VmaasPostRequest struct {
 	ErrataList    []string `json:"errata_list"`
 	ModifiedSince string   `json:"modified_since"`
 	Page          int      `json:"page"`
 }
 
-type CpeMapping struct {
-	Advisory     string
-	CVEs         []string
-	PackageToCpe map[string][]string
+type updater struct {
+	EtClient errata.ErrataInterface
 }
 
-type updater struct{}
-
-var c = cache.New(24*time.Hour, 30*time.Minute)
-var rpmToSrpmMapping = mapRpmToSrpm
-
-var vmaasURL = getEnv("VMAAS_URL", "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1")
-var cpeMappingURL = getEnv("CPE_MAPPING", "https://www.redhat.com/security/data/metrics/rhsamapcpe.txt")
-
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
+var vmaasURL = envutil.GetEnv("VMAAS_URL", "https://webapp-vmaas-stable.1b13.insights.openshiftapps.com/api/v1")
+var errataURL = envutil.GetEnv("ERRATA_URL", "https://errata.devel.redhat.com")
 
 func init() {
-	vulnsrc.RegisterUpdater("redhat", &updater{})
+	vulnsrc.RegisterUpdater("redhat", &updater{EtClient: &errata.Errata{errataURL}})
+
 }
 
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
@@ -117,11 +102,11 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		return resp, err
 	}
 
-	// this file provides mapping between advisory and CPEs
-	cpeMapping, err := getAdvisory2CpeMapping()
+	allVariants, err := u.EtClient.GetAllVariants()
 	if err != nil {
 		return resp, err
 	}
+	variantToCPEMapping := u.EtClient.VariantToCPEMapping(allVariants)
 
 	allAdvisories, err := getAdvisories(lastAdvIssued, additionalAdv)
 	if err != nil {
@@ -138,16 +123,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			log.WithField("Advisory", adv.Name).Debug("No packages or CVEs in advisory. Skipping...")
 			continue
 		}
-		_, err := findAdvisory(cpeMapping, adv.Name)
-		if err != nil {
-			// The advisory is missing in mapping file.
-			// The missing advisory will be stored in database and refreshed next time.
-			additionalAdv = append(additionalAdv, adv.Name)
-			log.WithField("Advisory", adv.Name).Debug("The advisory is not available in CPE mapping file.")
-
-		} else {
-			advisories = append(advisories, adv)
-		}
+		advisories = append(advisories, adv)
 
 	}
 	log.WithFields(log.Fields{
@@ -158,7 +134,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	vulnChan := make(chan []database.VulnerabilityWithAffected, len(advisories))
 	for i := 0; i < 20; i++ {
 		// parallel processing
-		go parseAdvisoryWorker(cpeMapping, advChan, vulnChan)
+		go u.parseAdvisoryWorker(variantToCPEMapping, advChan, vulnChan)
 	}
 
 	// sort advisories to make processing faster
@@ -171,6 +147,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	close(advChan)
 	for i := 0; i < len(advisories); i++ {
 		vulnerabilities := <-vulnChan
+		fmt.Println(i, len(advisories))
 		resp.Vulnerabilities = append(resp.Vulnerabilities, vulnerabilities...)
 	}
 	close(vulnChan)
@@ -179,13 +156,12 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		"items":          len(resp.Vulnerabilities),
 		"updater":        "RedHat",
 		"newUpdaterTime": newLastAdvIssued,
-		"missingMapping": additionalAdv,
 	}).Debug("Found new vulnerabilities")
 
 	// save new timestamp to database
 	resp.Flags = make(map[string]string)
 	resp.Flags[updaterFlag] = newLastAdvIssued.Format(time.RFC3339)
-	resp.Flags[additionalAdvFlag] = strings.Join(additionalAdv, ",")
+	resp.Flags[additionalAdvFlag] = ""
 	return resp, nil
 
 }
@@ -211,26 +187,6 @@ func findKeyValue(datastore database.Datastore) (lastAdvIssued time.Time, additi
 		additionalAdvSlice = strings.Split(additionalAdv, ",")
 	}
 	return lastAdvIssued, additionalAdvSlice, nil
-}
-
-func getAdvisory2CpeMapping() (cpeMapping []CpeMapping, err error) {
-	r, err := httputil.GetWithUserAgent(cpeMappingURL)
-	if err != nil {
-		log.WithError(err).Error("Could not download RedHat's CPE mapping file")
-		return cpeMapping, commonerr.ErrCouldNotDownload
-	}
-	defer r.Body.Close()
-
-	if !httputil.Status2xx(r) {
-		log.WithField("StatusCode", r.StatusCode).Error("Failed to update RedHat")
-		return cpeMapping, commonerr.ErrCouldNotDownload
-	}
-
-	cpeMappingBytes, _ := ioutil.ReadAll(r.Body)
-	cpeMappingData := string(cpeMappingBytes)
-
-	cpeMapping = parseCpeMapping(cpeMappingData)
-	return
 }
 
 func getAdvisories(lastAdvIssued time.Time, additionalAdvisories []string) (advisories []Advisory, err error) {
@@ -315,70 +271,28 @@ func vmaasAdvisoryRequest(advList []string, lastAdvIssued time.Time) (advisories
 	return advisories, nil
 }
 
-func parseAdvisoryWorker(cpeMapping []CpeMapping, advisory <-chan Advisory, vulnerabilities chan<- []database.VulnerabilityWithAffected) {
+func (u *updater) parseAdvisoryWorker(variantToCPEMapping map[string]string, advisory <-chan Advisory, vulnerabilities chan<- []database.VulnerabilityWithAffected) {
 	for adv := range advisory {
-		vuln := parseAdvisory(adv, cpeMapping)
+		vuln := u.parseAdvisory(adv, variantToCPEMapping)
 		vulnerabilities <- vuln
 	}
 }
 
-func parseCpeMapping(data string) []CpeMapping {
-	var cpeMapping []CpeMapping
-	lines := strings.Split(data, "\n")
-
-	for _, line := range lines {
-		if line == "" {
-			continue
-		}
-		// Format of line: RHSA-XXXX:YYYY CVE-XXXX-YY,CVE-XXXX-YZ CPE1,CPE2
-		fields := strings.Split(line, " ")
-		cpes := strings.Split(fields[2], ",")
-		packages := parseCpePackage(cpes, fields[0])
-		mappingItem := CpeMapping{
-			Advisory:     fields[0],
-			CVEs:         strings.Split(fields[1], ","),
-			PackageToCpe: packages,
-		}
-		cpeMapping = append(cpeMapping, mappingItem)
-	}
-	return cpeMapping
-
-}
-
-// parseCpePackage - parse package names from CPE string
-// example: cpe:/o:redhat:enterprise_linux:6::computenode/NetworkManager
-//    - source package: NetworkManager
-func parseCpePackage(cpes []string, advisory string) map[string][]string {
-	packageCpeMap := make(map[string][]string)
-
-	for _, cpe := range cpes {
-		if strings.Count(cpe, "/") == 1 || cpe == "" {
-			// text-only advisories
-			continue
-		}
-		separatorIndex := strings.LastIndex(cpe, "/")
-		packageName := cpe[separatorIndex+1:]
-		packageCpeMap[packageName] = append(packageCpeMap[packageName], cpe[:separatorIndex])
-	}
-	return packageCpeMap
-}
-
 // parseAdvisory - parse advisory metadata and create new Vulnerabilities objects
-func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities []database.VulnerabilityWithAffected) {
+func (u *updater) parseAdvisory(advisory Advisory, variantToCPEMapping map[string]string) (vulnerabilities []database.VulnerabilityWithAffected) {
 	if len(advisory.PackageList) == 0 || len(advisory.CveList) == 0 {
 		// text-only advisories
 		return
 	}
-	advisoryMapping, err := findAdvisory(cpeMapping, advisory.Name)
+	var advisoryPkgs map[string][]string
+
+	advisoryPkgs, err := u.EtClient.GetAdvisoryBuildsVariants(advisory.Name)
+
 	if err != nil {
-		log.WithFields(log.Fields{
-			"advisory": advisory.Name,
-			"updater":  "RedHat",
-		}).Debug("No CPE mapping for advisory")
+		log.Error("Failed to fetch advisory info: " + err.Error())
 		return
 	}
-
-	for _, cve := range advisoryMapping.CVEs {
+	for _, cve := range advisory.CveList {
 		packageMap := make(map[string]bool)
 		vulnerability := database.VulnerabilityWithAffected{
 			Vulnerability: database.Vulnerability{
@@ -393,11 +307,19 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 			if rpmNevraObj.Arch != "x86_64" && rpmNevraObj.Arch != "noarch" {
 				continue
 			}
-
-			srpm := rpmToSrpmMapping(nevra)
-			cpes, ok := advisoryMapping.PackageToCpe[srpm.Name]
-			if !ok {
-				continue
+			var cpes []string
+			for advPkg := range advisoryPkgs {
+				if advPkg == nevra+".rpm" {
+					for _, variant := range advisoryPkgs[advPkg] {
+						cpe, ok := variantToCPEMapping[variant]
+						if ok {
+							cpes = append(cpes, cpe)
+						} else {
+							log.Warning(fmt.Sprintf("No CPE for: %s %s %s", variant, advPkg, advisory.Name))
+						}
+					}
+					break
+				}
 			}
 
 			for _, cpe := range cpes {
@@ -429,36 +351,6 @@ func parseAdvisory(advisory Advisory, cpeMapping []CpeMapping) (vulnerabilities 
 		}
 	}
 	return
-}
-
-// findAdvisory in list of advisories based on name
-func findAdvisory(cpeMapping []CpeMapping, advisory string) (CpeMapping, error) {
-	for _, item := range cpeMapping {
-		if item.Advisory == advisory {
-			return item, nil
-		}
-	}
-	return CpeMapping{}, errors.New("No advisory in mapping file")
-}
-
-// mapRpmToSrpm based on Brew data
-// Brew API is cached
-func mapRpmToSrpm(rpmNevra string) SRPM {
-	value, found := c.Get(rpmNevra)
-	if !found {
-		brew := brew.NewClient(brewHub)
-		rpmObj := parseRpm(rpmNevra)
-		rpmInfo := brew.GetRPMInfo(rpmObj.rpmName())
-		buildInfo := brew.GetBuildInfo(rpmInfo.BuildID)
-
-		srpm := toSRPM(buildInfo)
-		c.Set(rpmNevra, srpm, cache.DefaultExpiration)
-		return srpm
-	} else {
-		srpm := value.(SRPM)
-		return srpm
-	}
-
 }
 
 type NEVR struct {
@@ -516,16 +408,6 @@ func (rpm *RPM) EpochVersionRelease() string {
 		return fmt.Sprintf("%d:%s-%s", *rpm.Epoch, rpm.Version, rpm.Release)
 	}
 	return fmt.Sprintf("%s-%s", rpm.Version, rpm.Release)
-}
-
-func toSRPM(buildInfo brew.BuildInfo) SRPM {
-	srpm := SRPM{}
-	srpm.Name = buildInfo.Name
-	srpm.Version = buildInfo.Version
-	srpm.Release = buildInfo.Release
-	srpm.Epoch = buildInfo.Epoch
-
-	return srpm
 }
 
 func (rpm *RPM) toNVRA() string {
