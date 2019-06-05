@@ -17,7 +17,6 @@ package redhat
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,13 +24,32 @@ import (
 
 	"github.com/coreos/clair/database"
 	"github.com/coreos/clair/ext/versionfmt/rpm"
+	"github.com/coreos/clair/pkg/errata"
 	"github.com/stretchr/testify/assert"
+	"gopkg.in/jcmturner/gokrb5.v7/spnego"
 )
 
-func mockRpmToSrpm(rpmNevra string) SRPM {
-	srpm := SRPM{}
-	srpm.Name = "tomcat7"
-	return srpm
+type MockEtClient struct{}
+
+func (c *MockEtClient) GetAdvisoryBuildsVariants(advisoryID string) (map[string][]string, error) {
+	return map[string][]string{
+		"tomcat7-docs-webapp-7.0.70-31.ep7.el7.noarch.rpm": []string{"variant-rhel7", "variant-rhel7-server"},
+		"tomcat7-selinux-7.0.70-31.ep7.el6.noarch.rpm":     []string{"variant-rhel6"},
+	}, nil
+}
+
+func (c *MockEtClient) NewClient() (client *spnego.Client, err error) {
+	return client, err
+}
+
+func (c *MockEtClient) GetAllVariants() ([]errata.Variant, error) {
+	var variants []errata.Variant
+	return variants, nil
+}
+
+func (c *MockEtClient) VariantToCPEMapping(variants []errata.Variant) map[string]string {
+	mapping := make(map[string]string)
+	return mapping
 }
 
 func TestRedHatParserOneCVE(t *testing.T) {
@@ -44,13 +62,15 @@ func TestRedHatParserOneCVE(t *testing.T) {
 	if err := json.NewDecoder(testFile).Decode(&rhsaData); err != nil {
 		panic(err)
 	}
-
-	testrhsacpedata, _ := ioutil.ReadFile(filepath.Join(path, "/testdata/rhsatocpe.txt"))
-	cpeMapping := parseCpeMapping(string(testrhsacpedata))
+	rhUpdater := updater{&MockEtClient{}}
+	variantToCpeMapping := map[string]string{
+		"variant-rhel7": "cpe:/o:redhat:enterprise_linux:7::workstation",
+		"variant-rhel7-server": "cpe:/o:redhat:enterprise_linux:7::server",
+		"variant-rhel6": "cpe:/o:redhat:enterprise_linux:6::workstation",
+	}
 	adv := rhsaData.ErrataList["RHSA-2019:0139"]
 	adv.Name = "RHSA-2019:0139"
-	rpmToSrpmMapping = mockRpmToSrpm
-	vulnerabilities := parseAdvisory(adv, cpeMapping)
+	vulnerabilities := rhUpdater.parseAdvisory(adv, variantToCpeMapping)
 	fmt.Println(vulnerabilities)
 	assert.Equal(t, "CVE-2017-2582 - RHSA-2019:0139", vulnerabilities[0].Name)
 	assert.Equal(t, "https://access.redhat.com/security/cve/CVE-2017-2582", vulnerabilities[0].Link)
@@ -61,37 +81,27 @@ func TestRedHatParserOneCVE(t *testing.T) {
 		{
 			FeatureType: affectedType,
 			Namespace: database.Namespace{
-				Name:          "cpe:/o:redhat:enterprise_linux:6::workstation",
-				VersionFormat: rpm.ParserName,
-			},
-			FeatureName:     "tomcat7-docs-webapp",
-			AffectedVersion: "7.0.70-31.ep7.el6",
-			FixedInVersion:  "7.0.70-31.ep7.el6",
-		},
-		{
-			FeatureType: affectedType,
-			Namespace: database.Namespace{
 				Name:          "cpe:/o:redhat:enterprise_linux:7::workstation",
 				VersionFormat: rpm.ParserName,
 			},
 			FeatureName:     "tomcat7-docs-webapp",
-			AffectedVersion: "7.0.70-31.ep7.el6",
-			FixedInVersion:  "7.0.70-31.ep7.el6",
+			AffectedVersion: "7.0.70-31.ep7.el7",
+			FixedInVersion:  "7.0.70-31.ep7.el7",
+		},
+		{
+			FeatureType: affectedType,
+			Namespace: database.Namespace{
+				Name:          "cpe:/o:redhat:enterprise_linux:7::server",
+				VersionFormat: rpm.ParserName,
+			},
+			FeatureName:     "tomcat7-docs-webapp",
+			AffectedVersion: "7.0.70-31.ep7.el7",
+			FixedInVersion:  "7.0.70-31.ep7.el7",
 		},
 		{
 			FeatureType: affectedType,
 			Namespace: database.Namespace{
 				Name:          "cpe:/o:redhat:enterprise_linux:6::workstation",
-				VersionFormat: rpm.ParserName,
-			},
-			FeatureName:     "tomcat7-selinux",
-			AffectedVersion: "7.0.70-31.ep7.el6",
-			FixedInVersion:  "7.0.70-31.ep7.el6",
-		},
-		{
-			FeatureType: affectedType,
-			Namespace: database.Namespace{
-				Name:          "cpe:/o:redhat:enterprise_linux:7::workstation",
 				VersionFormat: rpm.ParserName,
 			},
 			FeatureName:     "tomcat7-selinux",
