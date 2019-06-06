@@ -11,6 +11,7 @@ package clairpb
 import (
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
@@ -27,6 +28,8 @@ var _ io.Reader
 var _ status.Status
 var _ = runtime.String
 var _ = utilities.NewDoubleArray
+
+var ancestryMutex = &sync.Mutex{}
 
 func request_AncestryService_GetAncestry_0(ctx context.Context, marshaler runtime.Marshaler, client AncestryServiceClient, req *http.Request, pathParams map[string]string) (proto.Message, runtime.ServerMetadata, error) {
 	var protoReq GetAncestryRequest
@@ -64,8 +67,9 @@ func request_AncestryService_PostAncestry_0(ctx context.Context, marshaler runti
 			return nil, metadata, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
 	}
-
+	ancestryMutex.Lock()
 	msg, err := client.PostAncestry(ctx, &protoReq, grpc.Header(&metadata.HeaderMD), grpc.Trailer(&metadata.TrailerMD))
+	ancestryMutex.Unlock()
 	return msg, metadata, err
 
 }
