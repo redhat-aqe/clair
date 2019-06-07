@@ -308,7 +308,7 @@ func (u *updater) parseAdvisory(advisory Advisory, variantToCPEMapping map[strin
 			}
 			var cpes []string
 			for advPkg := range advisoryPkgs {
-				if advPkg == nevra+".rpm" {
+				if advPkg == (rpmNevraObj.toNVRA() + ".rpm") {
 					for _, variant := range advisoryPkgs[advPkg] {
 						cpe, ok := variantToCPEMapping[variant]
 						if ok {
@@ -320,7 +320,9 @@ func (u *updater) parseAdvisory(advisory Advisory, variantToCPEMapping map[strin
 					break
 				}
 			}
-
+			if len(cpes) == 0 {
+				log.Warning(fmt.Sprintf("No CPE for: %s %s", nevra, advisory.Name))
+			}
 			for _, cpe := range cpes {
 				epochVersionRelease := rpmNevraObj.EpochVersionRelease()
 				key := rpmNevraObj.Name + epochVersionRelease + cpe
