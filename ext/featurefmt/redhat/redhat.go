@@ -29,6 +29,7 @@ import (
 	"github.com/deckarep/golang-set"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/buildkite/interpolate"
 	"github.com/coreos/clair/database"
 	"github.com/coreos/clair/ext/featurefmt"
 	"github.com/coreos/clair/ext/versionfmt"
@@ -253,7 +254,7 @@ func getPotentialNamespace(files tarutil.FilesMap) (namespaces []database.Namesp
 		previousNVR = ""
 		previousArch = ""
 	}
-	if nvr == "" || arch == ""{
+	if nvr == "" || arch == "" {
 		return
 	}
 	cpes := getCPEs(nvr, arch)
@@ -289,12 +290,19 @@ func extractBuildNVR(dockerfilePath string, files tarutil.FilesMap) (nvr, arch s
 	r := bytes.NewReader(dfData)
 	df, _ := dockerfile.ParseReader(r)
 	var name string
+	envVariable := interpolate.NewMapEnv(buildVarMap(df))
 	for _, cmd := range df {
 		if cmd.Cmd == "label" {
 			for i, value := range cmd.Value {
 				switch strings.Trim(value, "\"") {
 				case "com.redhat.component":
 					name = strings.Trim(cmd.Value[i+1], "\"")
+					interpolatedName, err := interpolate.Interpolate(envVariable, name)
+					if err != nil {
+						log.Debug("Can't interpolate name from Dockerfile: " + name)
+					} else {
+						name = interpolatedName
+					}
 				case "architecture":
 					arch = strings.Trim(cmd.Value[i+1], "\"")
 				}
@@ -306,6 +314,19 @@ func extractBuildNVR(dockerfilePath string, files tarutil.FilesMap) (nvr, arch s
 	version, release := parseVersionRelease(fileName)
 	nvr = name + "-" + version + "-" + release
 	return
+}
+
+func buildVarMap(commands []dockerfile.Command) map[string]string {
+	output := make(map[string]string)
+	for _, cmd := range commands {
+		if cmd.Cmd == "env" || cmd.Cmd == "arg" {
+			for i := 0; i < len(cmd.Value)-1; i = i + 2 {
+				key := strings.Trim(cmd.Value[i], "\"")
+				output[key] = strings.Trim(cmd.Value[i+1], "\"")
+			}
+		}
+	}
+	return output
 }
 
 // parseVersionRelease - parse release and version from NVR
