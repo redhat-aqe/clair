@@ -257,6 +257,7 @@ func getPotentialNamespace(files tarutil.FilesMap) (namespaces []database.Namesp
 	if nvr == "" || arch == "" {
 		return
 	}
+	log.WithField("nvr", nvr).Debug("Found layer identification")
 	cpes := getCPEs(nvr, arch)
 	log.WithField("cpes", cpes).Debug("Found CPEs for given layer")
 	fmt.Println(cpes)
@@ -297,7 +298,7 @@ func extractBuildNVR(dockerfilePath string, files tarutil.FilesMap) (nvr, arch s
 				switch strings.Trim(value, "\"") {
 				case "com.redhat.component":
 					name = strings.Trim(cmd.Value[i+1], "\"")
-					interpolatedName, err := interpolate.Interpolate(envVariable, name)
+					interpolatedName, err := interpolateName(name, envVariable)
 					if err != nil {
 						log.Debug("Can't interpolate name from Dockerfile: " + name)
 					} else {
@@ -327,6 +328,19 @@ func buildVarMap(commands []dockerfile.Command) map[string]string {
 		}
 	}
 	return output
+}
+
+func interpolateName(name string, envVariable interpolate.Env) (interpolatedName string, err error) {
+	interpolatedName, err = interpolate.Interpolate(envVariable, name)
+	if err != nil {
+		return interpolatedName, err
+	}
+	if name == interpolatedName {
+		// no interpolation have been done
+		return interpolatedName, nil
+	}
+	// there is still some variable in name
+	return interpolateName(interpolatedName, envVariable)
 }
 
 // parseVersionRelease - parse release and version from NVR
