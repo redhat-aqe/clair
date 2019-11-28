@@ -6,7 +6,6 @@ require (
 	github.com/Shopify/sarama v1.24.1 // indirect
 	github.com/asottile/dockerfile v2.2.0+incompatible
 	github.com/buildkite/interpolate v0.0.0-20181028012610-973457fa2b4c
-	github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292
 	github.com/coreos/clair v2.1.0+incompatible
 	github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf
 	github.com/deckarep/golang-set v1.7.1
@@ -19,6 +18,7 @@ require (
 	github.com/guregu/null v3.4.0+incompatible
 	github.com/hashicorp/golang-lru v0.5.0
 	github.com/julienschmidt/httprouter v1.2.0
+	github.com/klauspost/cpuid v1.2.1 // indirect
 	github.com/lib/pq v0.0.0-20170603225454-8837942c3e09
 	github.com/mattn/go-sqlite3 v1.11.0 // indirect
 	github.com/moby/buildkit v0.6.3 // indirect
