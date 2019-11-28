@@ -3,12 +3,15 @@ module github.com/quay/clair/v3
 go 1.12
 
 require (
+	github.com/Shopify/sarama v1.24.1 // indirect
 	github.com/asottile/dockerfile v2.2.0+incompatible
 	github.com/buildkite/interpolate v0.0.0-20181028012610-973457fa2b4c
 	github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292
+	github.com/coreos/clair v2.1.0+incompatible
 	github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf
 	github.com/deckarep/golang-set v1.7.1
 	github.com/fernet/fernet-go v0.0.0-20151007213151-1b2437bc582b
+	github.com/go-stomp/stomp v2.0.3+incompatible
 	github.com/golang/protobuf v1.2.0
 	github.com/google/uuid v1.1.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20170330212424-2500245aa611
@@ -25,9 +28,11 @@ require (
 	github.com/sirupsen/logrus v1.3.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/stretchr/testify v1.3.0
-	golang.org/x/net v0.0.0-20190311183353-d8887717615a
+	github.com/tracer0tong/kafkalogrus v0.0.0-20180816014403-290bb4d4d549
+	golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3
 	golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4
 	google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
 	google.golang.org/grpc v1.20.1
+	gopkg.in/jcmturner/gokrb5.v7 v7.2.3
 	gopkg.in/yaml.v2 v2.2.2
 )
