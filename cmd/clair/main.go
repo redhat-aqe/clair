@@ -43,7 +43,6 @@ import (
 	_ "github.com/quay/clair/v3/ext/featurefmt/dpkg"
 	_ "github.com/quay/clair/v3/ext/featurefmt/modulerpm"
 	_ "github.com/quay/clair/v3/ext/featurefmt/redhatrpm"
-	_ "github.com/quay/clair/v3/ext/featurefmt/rpm"
 	_ "github.com/quay/clair/v3/ext/featurens/alpinerelease"
 	_ "github.com/quay/clair/v3/ext/featurens/aptsources"
 	_ "github.com/quay/clair/v3/ext/featurens/lsbrelease"
