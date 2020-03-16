@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/bzip2"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -34,7 +35,9 @@ import (
 const (
 	PulpV2BaseURL            = "https://www.redhat.com/security/data/oval/v2/"
 	PulpManifest             = "PULP_MANIFEST"
-	DbManifestEntryKeyPrefix = "oval.pulp.manifest.entry."
+	DbManifestEntryKeyPrefix = "oval.v2.pulp.manifest.entry."
+	DbLastAdvisoryDateKey    = "oval.v2.advisory.date.issued"
+	DefaultLastAdvisoryDate  = "1970-01-01"
 )
 
 type ManifestEntry struct {
@@ -46,6 +49,79 @@ type ManifestEntry struct {
 	BzipPath  string // RHEL8/ansible-2.8.oval.xml.bz2
 	Signature string // 14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed
 	Size      int    // 3755
+}
+
+type OvalDefinitions struct {
+	XMLName xml.Name `xml:"oval_definitions"`
+	Advisories  []*Advisory `xml:"definitions>definition>metadata>advisory"`
+}
+
+type Advisory struct {
+    Issued    AdvisoryIssued     `xml:"issued"`
+	Updated   AdvisoryUpdated    `xml:"updated"`
+	Severity  string             `xml:"severity"`
+	Cve       CveData            `xml:"cve"`
+}
+
+type AdvisoryIssued struct {
+	XMLName  xml.Name  `xml:"issued"`
+    Date     string    `xml:"date,attr"`
+}
+
+type AdvisoryUpdated struct {
+	XMLName  xml.Name  `xml:"updated"`
+    Date     string    `xml:"date,attr"`
+}
+
+type CveData struct {
+	XMLName  xml.Name  `xml:"cve"`
+    Cvss3    string    `xml:"cvss3,attr"`
+    Cwe      string    `xml:"cwe,attr"`
+	Href     string    `xml:"href,attr"`
+	Public   string    `xml:"public,attr"`
+}
+
+func GetUnprocessedAdvisories(ovalDoc string, datastore database.Datastore) ([]Advisory, error) {
+	dbLastAdvisoryDate := DbLookupLastAdvisoryDate(datastore)
+	log.Debug(dbLastAdvisoryDate)
+	if (ovalDoc == "") {
+		return nil, errors.New("Cannot parse empty source oval doc")
+	}
+	//
+	ovalDefinitions := &OvalDefinitions{}
+	err := xml.Unmarshal([]byte(ovalDoc), &ovalDefinitions)
+	if err != nil {
+		panic(err)
+	}
+	var advisories []Advisory
+	// walk the advisories and add any which are after the db last advisory date
+	out, _ := xml.MarshalIndent(ovalDefinitions, " ", "  ")
+	log.Debug(string(out))
+	
+	return advisories, nil
+}
+
+func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
+	dbLastAdvisoryDate, ok, err := database.FindKeyValueAndRollback(datastore, DbLastAdvisoryDateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ok == false {
+		// no record found, use default
+		return DefaultLastAdvisoryDate
+	}
+	// return the current db value
+	return dbLastAdvisoryDate
+}
+
+// update the db key/value table with the given manifest entry's signature 
+func DbUpdateLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datastore) {
+	// store the latest sha256 hash for this entry
+	err := database.UpdateKeyValueAndCommit(datastore, 
+		DbLastAdvisoryDateKey, lastAdvisoryDate)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 // process any non-processed pulp manifest entries
@@ -72,7 +148,6 @@ func DbUpdateManifestEntrySignature(manifestEntry ManifestEntry, datastore datab
 // check the db key/value table to determine whether the given entry is new/updated
 //   since the last time the manifest was processed
 func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database.Datastore) bool {
-	//
 	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore, 
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath)
 	if err != nil {
