@@ -20,7 +20,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
 	"testing"
 
 	"github.com/quay/clair/v3/database"
@@ -28,7 +27,7 @@ import (
 )
 
 const (
-	TestLastAdvisoryDate  = "2020-01-02"
+	TestLastAdvisoryDate  = "2019-11-01"
 )
 
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
@@ -156,25 +155,30 @@ func TestGetUnprocessedAdvisories(t *testing.T) {
 		log.Fatal("error reading " + xmlFilePath)
 	}
 	type args struct {
-		ovalDoc string
+		ovalDoc    string
+		sinceDate  string
 	}
 	tests := []struct {
-		name    string
-		args    args
-		want    []Advisory
-		wantErr bool
+		name      string
+		args      args
+		wantCount int
+		wantErr   bool
 	}{
-		{"1", args{string(xmlContent)}, nil, false},
+		{"1", args{string(xmlContent), "2020-01-22"}, 1, false},
+		{"2", args{string(xmlContent), "2019-10-25"}, 2, false},
+		{"3", args{string(xmlContent), "2019-10-23"}, 3, false},
+		{"4", args{string(xmlContent), "2019-08-21"}, 4, false},
+		{"5", args{string(xmlContent), "2019-07-01"}, 5, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GetUnprocessedAdvisories(tt.args.ovalDoc, newmockDatastore())
+			got, err := getAdvisoriesSince(tt.args.ovalDoc, tt.args.sinceDate, newmockDatastore())
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GetUnprocessedAdvisories() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("getAdvisoriesSince() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetUnprocessedAdvisories() = %v, want %v", got, tt.want)
+			if tt.wantCount != len(got) {
+				t.Errorf("getAdvisoriesSince() = %v, want %v", len(got), tt.wantCount)
 			}
 		})
 	}
