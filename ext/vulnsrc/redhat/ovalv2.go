@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/quay/clair/v3/database"
 	log "github.com/sirupsen/logrus"
@@ -38,6 +39,7 @@ const (
 	DbManifestEntryKeyPrefix = "oval.v2.pulp.manifest.entry."
 	DbLastAdvisoryDateKey    = "oval.v2.advisory.date.issued"
 	DefaultLastAdvisoryDate  = "1970-01-01"
+	AdvisoryDateFormat       = "2006-01-02"  // datetime format uses 'magical reference date'
 )
 
 type ManifestEntry struct {
@@ -51,29 +53,29 @@ type ManifestEntry struct {
 	Size      int    // 3755
 }
 
-type OvalDefinitions struct {
+type OvalV2Definitions struct {
 	XMLName xml.Name `xml:"oval_definitions"`
-	Advisories  []*Advisory `xml:"definitions>definition>metadata>advisory"`
+	Advisories  []*OvalV2Advisory `xml:"definitions>definition>metadata>advisory"`
 }
 
-type Advisory struct {
-    Issued    AdvisoryIssued     `xml:"issued"`
-	Updated   AdvisoryUpdated    `xml:"updated"`
-	Severity  string             `xml:"severity"`
-	Cve       CveData            `xml:"cve"`
+type OvalV2Advisory struct {
+    Issued    OvalV2AdvisoryIssued     `xml:"issued"`
+	Updated   OvalV2AdvisoryUpdated    `xml:"updated"`
+	Severity  string                   `xml:"severity"`
+	Cve       OvalV2CveData            `xml:"cve"`
 }
 
-type AdvisoryIssued struct {
+type OvalV2AdvisoryIssued struct {
 	XMLName  xml.Name  `xml:"issued"`
     Date     string    `xml:"date,attr"`
 }
 
-type AdvisoryUpdated struct {
+type OvalV2AdvisoryUpdated struct {
 	XMLName  xml.Name  `xml:"updated"`
     Date     string    `xml:"date,attr"`
 }
 
-type CveData struct {
+type OvalV2CveData struct {
 	XMLName  xml.Name  `xml:"cve"`
     Cvss3    string    `xml:"cvss3,attr"`
     Cwe      string    `xml:"cwe,attr"`
@@ -81,26 +83,55 @@ type CveData struct {
 	Public   string    `xml:"public,attr"`
 }
 
-func GetUnprocessedAdvisories(ovalDoc string, datastore database.Datastore) ([]Advisory, error) {
-	dbLastAdvisoryDate := DbLookupLastAdvisoryDate(datastore)
-	log.Debug(dbLastAdvisoryDate)
+// get advisories from the given oval xml which were issued since the last update (based on db value)
+func GetAdvisoriesSinceLastDbUpdate(ovalDoc string, datastore database.Datastore) ([]OvalV2Advisory, error) {
+	return getAdvisoriesSince(ovalDoc, DbLookupLastAdvisoryDate(datastore), datastore)
+}
+
+// get advisories from the given oval xml which were issued since the given date (to support more flexible testing)
+func getAdvisoriesSince(ovalDoc string, sinceDate string, datastore database.Datastore) ([]OvalV2Advisory, error) {
 	if (ovalDoc == "") {
 		return nil, errors.New("Cannot parse empty source oval doc")
 	}
 	//
-	ovalDefinitions := &OvalDefinitions{}
+	ovalDefinitions := OvalV2Definitions{}
 	err := xml.Unmarshal([]byte(ovalDoc), &ovalDefinitions)
 	if err != nil {
 		panic(err)
 	}
-	var advisories []Advisory
+	var advisories []OvalV2Advisory
 	// walk the advisories and add any which are after the db last advisory date
+	for _, advisory := range ovalDefinitions.Advisories {
+		// check if this entry has already been processed (based on its sha256 hash)
+		if IsAdvisorySinceDate(sinceDate, advisory.Issued.Date) {
+			// this advisory was issued since the last advisory date in the database
+			advisories = append(advisories, *advisory)
+		}
+	}
+	// debug-only info
 	out, _ := xml.MarshalIndent(ovalDefinitions, " ", "  ")
 	log.Debug(string(out))
 	
 	return advisories, nil
 }
 
+// determine whether the given advisory date string is since the last update
+func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
+	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
+    if err != nil {
+        log.Fatal("error parsing date string: " + sinceDate)
+	}
+	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
+    if err != nil {
+        log.Fatal("error parsing date string: " + advisoryDate)
+	}
+	// since dates are simple YYYY-MM-dd format, check not-before rather than after
+	// - err on the side of occasionally repeating advisory processing, 
+	//   versus occasionally skipping new advisories which have the same simple date as already registered
+	return !advisoryTime.Before(sinceTime)
+}
+
+// lookup the last advisory date from db key/value table
 func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	dbLastAdvisoryDate, ok, err := database.FindKeyValueAndRollback(datastore, DbLastAdvisoryDateKey)
 	if err != nil {
@@ -114,9 +145,8 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	return dbLastAdvisoryDate
 }
 
-// update the db key/value table with the given manifest entry's signature 
-func DbUpdateLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datastore) {
-	// store the latest sha256 hash for this entry
+// update the db key/value table with the given last advisory date 
+func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datastore) {
 	err := database.UpdateKeyValueAndCommit(datastore, 
 		DbLastAdvisoryDateKey, lastAdvisoryDate)
 	if err != nil {
@@ -176,6 +206,7 @@ func FetchPulpManifest(pulpManifestUrl string) (string, error) {
 	return string(body), err
 }
 
+// parse the PULP_MANIFEST file body
 func ParsePulpManifest(pulpManifestBody string) []ManifestEntry {
 	var manifestEntries []ManifestEntry
 	if pulpManifestBody != "" {
@@ -216,6 +247,7 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 	return entry, err
 }
 
+// decompress and read a bzip2-compressed oval file, return the xml content as string
 func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 	var stringbuilder strings.Builder
 	resp, err := http.Get(bzipOvalFile)
