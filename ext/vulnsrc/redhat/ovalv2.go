@@ -20,7 +20,6 @@ import (
 	"bufio"
 	"bytes"
 	"compress/bzip2"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"io/ioutil"
