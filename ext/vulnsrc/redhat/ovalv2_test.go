@@ -20,19 +20,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/quay/clair/v3/database"
+	log "github.com/sirupsen/logrus"
+)
+
+const (
+	TestLastAdvisoryDate  = "2020-01-02"
 )
 
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 
 	manifestEntry_1 := ManifestEntry{
-		"RHEL8/ansible-2.8.oval.xml.bz2","14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed",3755}
+		"RHEL8/ansible-2.8.oval.xml.bz2", "14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed", 3755}
 	manifestEntry_2 := ManifestEntry{
-		"RHEL8/ansible-2.8.oval.xml.bz2","320eeb4984a0678e4fa9a3f8421b87f2a57a2922cd4e3f582eb7cc735239ce72",3755}
-		type args struct {
+		"RHEL8/ansible-2.8.oval.xml.bz2", "320eeb4984a0678e4fa9a3f8421b87f2a57a2922cd4e3f582eb7cc735239ce72", 3755}
+	type args struct {
 		manifestEntry ManifestEntry
 		datastore     database.Datastore
 	}
@@ -143,10 +148,62 @@ func TestReadBzipOvalFile(t *testing.T) {
 	}
 }
 
+func TestGetUnprocessedAdvisories(t *testing.T) {
+	pwd, _ := os.Getwd()
+	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
+	xmlContent, err := ioutil.ReadFile(xmlFilePath)
+	if err != nil {
+		log.Fatal("error reading " + xmlFilePath)
+	}
+	type args struct {
+		ovalDoc string
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    []Advisory
+		wantErr bool
+	}{
+		{"1", args{string(xmlContent)}, nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetUnprocessedAdvisories(tt.args.ovalDoc, newmockDatastore())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetUnprocessedAdvisories() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetUnprocessedAdvisories() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDbLookupLastAdvisoryDate(t *testing.T) {
+	type args struct {
+		datastore database.Datastore
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"1", args{newmockDatastore()}, TestLastAdvisoryDate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DbLookupLastAdvisoryDate(tt.args.datastore); got != tt.want {
+				t.Errorf("DbLookupLastAdvisoryDate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 type mockDatastore struct {
 	database.MockDatastore
 
-	keyValues        map[string]string
+	keyValues map[string]string
 }
 
 type mockUpdaterSession struct {
@@ -159,24 +216,25 @@ type mockUpdaterSession struct {
 
 func copyDatastore(md *mockDatastore) mockDatastore {
 	kv := map[string]string{
-		"oval.pulp.manifest.entry.RHEL7/ansible-2.8.oval.xml.bz2":"b5a05dbe78f7d472f08bc4ad221d6018ce5e5ad32434f997fe395d54ebe21e65",
-		"oval.pulp.manifest.entry.RHEL7/ansible-2.9.oval.xml.bz2":"109f1d47b6221333fce2d54052a7cdb9ef50bd29adf964c18f054f4aac62beaa",
-		"oval.pulp.manifest.entry.RHEL8/ansible-2.8.oval.xml.bz2":"14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed",
-		"oval.pulp.manifest.entry.RHEL8/ansible-2.9.oval.xml.bz2":"6e6edbcaf0bb3bac108a796d7fb2d2c4f637f581d6c6d2bb8d0d0a87294d4460",
+		DbManifestEntryKeyPrefix + "RHEL7/ansible-2.8.oval.xml.bz2": "b5a05dbe78f7d472f08bc4ad221d6018ce5e5ad32434f997fe395d54ebe21e65",
+		DbManifestEntryKeyPrefix + "RHEL7/ansible-2.9.oval.xml.bz2": "109f1d47b6221333fce2d54052a7cdb9ef50bd29adf964c18f054f4aac62beaa",
+		DbManifestEntryKeyPrefix + "RHEL8/ansible-2.8.oval.xml.bz2": "14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed",
+		DbManifestEntryKeyPrefix + "RHEL8/ansible-2.9.oval.xml.bz2": "6e6edbcaf0bb3bac108a796d7fb2d2c4f637f581d6c6d2bb8d0d0a87294d4460",
+		DbLastAdvisoryDateKey: TestLastAdvisoryDate,
 	}
 	for key, value := range md.keyValues {
 		kv[key] = value
 	}
 
 	return mockDatastore{
-		keyValues:        kv,
+		keyValues: kv,
 	}
 }
 
 func newmockDatastore() *mockDatastore {
 	errSessionDone := errors.New("Session Done")
 	md := &mockDatastore{
-		keyValues:        make(map[string]string),
+		keyValues: make(map[string]string),
 	}
 
 	md.FctBegin = func() (database.Session, error) {
