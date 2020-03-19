@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -63,24 +64,74 @@ type OvalV2Advisory struct {
 	Updated   OvalV2AdvisoryUpdated    `xml:"updated"`
 	Severity  string                   `xml:"severity"`
 	Cve       OvalV2CveData            `xml:"cve"`
+	AffectedCpeList   OvalV2Cpe        `xml:"affected_cpe_list"`
 }
 
 type OvalV2AdvisoryIssued struct {
-	XMLName  xml.Name  `xml:"issued"`
+	// XMLName  xml.Name  `xml:"issued"`
     Date     string    `xml:"date,attr"`
 }
 
 type OvalV2AdvisoryUpdated struct {
-	XMLName  xml.Name  `xml:"updated"`
+	// XMLName  xml.Name  `xml:"updated"`
     Date     string    `xml:"date,attr"`
 }
 
 type OvalV2CveData struct {
-	XMLName  xml.Name  `xml:"cve"`
+	// XMLName  xml.Name  `xml:"cve"`
     Cvss3    string    `xml:"cvss3,attr"`
     Cwe      string    `xml:"cwe,attr"`
 	Href     string    `xml:"href,attr"`
 	Public   string    `xml:"public,attr"`
+}
+
+type OvalV2Cpe struct {
+	Cpe      []string   `xml:"cpe"`
+}
+
+type CpeName struct {
+	Part       string
+	Vendor     string
+	Product    string
+	Version    string
+	Update     string
+	Edition    string
+	Language   string
+}
+
+func ParseNVRA(rpmName string) []string {
+	var regexRpmNVRA = regexp.MustCompile(`(.*/)*(.*)-(.*)-(.*?)\.([^.]*)(\.rpm)`)
+	matches := regexRpmNVRA.FindStringSubmatch(rpmName)[2:6]
+	return matches
+}
+
+// parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
+func ParseParseCpeNameFromAffectedCpeList(affectedCpeList OvalV2Cpe) (CpeName, error) {
+	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
+		return CpeName{}, errors.New("unparseable affected cpe list")
+	}
+	// parse and return the second cpe entry from the list
+	return ParseCpeName(affectedCpeList.Cpe[1]), nil
+}
+
+// parse cpe string
+func ParseCpeName(cpeNameString string) CpeName {
+	// cpe:/ {part} : {vendor} : {product} : {version} : {update} : {edition} : {language}
+	// remove the "cpe:/" prelude and split the cpe name string into its components
+	components := strings.Split(strings.Replace(cpeNameString, "cpe:/", "", 1), ":")
+	// components slice must contain 7 elements; append empty string to any missing elements
+	for i := len(components); i < 7; i++ {
+		components = append(components, "")
+	}
+	return CpeName{
+		Part:      components[0],
+		Vendor:    components[1],
+		Product:   components[2],
+		Version:   components[3],
+		Update:    components[4],
+		Edition:   components[5],
+		Language:  components[6],
+	}
 }
 
 // get advisories from the given oval xml which were issued since the last update (based on db value)

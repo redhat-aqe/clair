@@ -15,11 +15,13 @@
 package redhat
 
 import (
+	"encoding/xml"
 	"errors"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/quay/clair/v3/database"
@@ -27,7 +29,7 @@ import (
 )
 
 const (
-	TestLastAdvisoryDate  = "2019-11-01"
+	TestLastAdvisoryDate = "2019-11-01"
 )
 
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
@@ -155,8 +157,8 @@ func TestGetUnprocessedAdvisories(t *testing.T) {
 		log.Fatal("error reading " + xmlFilePath)
 	}
 	type args struct {
-		ovalDoc    string
-		sinceDate  string
+		ovalDoc   string
+		sinceDate string
 	}
 	tests := []struct {
 		name      string
@@ -199,6 +201,104 @@ func TestDbLookupLastAdvisoryDate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := DbLookupLastAdvisoryDate(tt.args.datastore); got != tt.want {
 				t.Errorf("DbLookupLastAdvisoryDate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseParseCpeNameFromAffectedCpeList(t *testing.T) {
+	pwd, _ := os.Getwd()
+	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
+	xmlContent, err := ioutil.ReadFile(xmlFilePath)
+	if err != nil {
+		log.Fatal("error reading " + xmlFilePath)
+	} else {
+		log.Debug("found " + xmlFilePath + ": " + string(xmlContent))
+	}
+	result := new(OvalV2Definitions)
+	errUnmarsh := xml.Unmarshal([]byte(xmlContent), result)
+	if errUnmarsh != nil {
+		log.Error(errUnmarsh)
+		return
+	}
+	type args struct {
+		affectedCpeList OvalV2Cpe
+	}
+	tests := []struct {
+		name    string
+		args    args
+		want    CpeName
+		wantErr bool
+	}{
+		// cpe:/a:redhat:ansible_engine:2.8::el8
+		{"1", args{result.Advisories[0].AffectedCpeList},
+			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
+			false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseParseCpeNameFromAffectedCpeList(tt.args.affectedCpeList)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseParseCpeNameFromAffectedCpeList() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseParseCpeNameFromAffectedCpeList() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCpeName(t *testing.T) {
+	type args struct {
+		cpeNameString string
+	}
+	tests := []struct {
+		name string
+		args args
+		want CpeName
+	}{
+		{"1", args{"cpe:/a:redhat:ansible_engine:2.9::el7"},
+			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "el7", Language: ""}},
+		{"2", args{"cpe:/a:redhat:ansible_engine:2.9"},
+			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "", Language: ""}},
+		{"3", args{"cpe:/"},
+			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
+		{"4", args{""},
+			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
+		{"5", args{"cpe:/a:mozilla:firefox:2.0.0.6::osx:zh-tw"},
+			CpeName{Part: "a", Vendor: "mozilla", Product: "firefox", Version: "2.0.0.6", Update: "", Edition: "osx", Language: "zh-tw"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseCpeName(tt.args.cpeNameString); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseCpeName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNVRA(t *testing.T) {
+	// golang-1.6.3-2.el7.x86_64.rpm
+	// Name        : golang
+	// Version     : 1.6.3
+	// Release     : 2.el7
+	// Architecture: x86_64
+	type args struct {
+		rpmName string
+	}
+	tests := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{"golang-1.6.3-2.el7.x86_64.rpm", args{"golang-1.6.3-2.el7.x86_64.rpm"},
+			[]string{"golang","1.6.3","2.el7","x86_64"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseNVRA(tt.args.rpmName); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseNVRA() = %v, want %v", got, tt.want)
 			}
 		})
 	}
