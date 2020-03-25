@@ -227,13 +227,18 @@ func TestParseParseCpeNameFromAffectedCpeList(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    args
-		want    CpeName
+		want    []CpeName
 		wantErr bool
 	}{
 		// cpe:/a:redhat:ansible_engine:2.8::el8
-		{"1", args{result.Advisories[0].AffectedCpeList},
-			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
-			false},
+		{
+			"1", 
+			args{result.Definitions[0].Metadata.Advisory.AffectedCpeList},
+			[]CpeName{
+				{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
+			},
+			false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -290,15 +295,60 @@ func TestParseNVRA(t *testing.T) {
 	tests := []struct {
 		name string
 		args args
-		want []string
+		want RpmNvra
 	}{
 		{"golang-1.6.3-2.el7.x86_64.rpm", args{"golang-1.6.3-2.el7.x86_64.rpm"},
-			[]string{"golang","1.6.3","2.el7","x86_64"}},
+			RpmNvra{"golang", "1.6.3", "2.el7", "x86_64"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseNVRA(tt.args.rpmName); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseNVRA() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseDefinitionNamespaces(t *testing.T) {
+	pwd, _ := os.Getwd()
+	xmlFilePath := pwd + "/testdata/v2/rhel-8.oval_abbreviated.xml"
+	xmlContent, err := ioutil.ReadFile(xmlFilePath)
+	if err != nil {
+		log.Fatal("error reading " + xmlFilePath)
+	} else {
+		log.Debug("found " + xmlFilePath + ": " + string(xmlContent))
+	}
+	type args struct {
+		ovalDefinitionsXml string
+	}
+	tests := []struct {
+		name string
+		args args
+		want []OvalV2DefinitionNamespaces
+	}{
+		{
+			"1", 
+			args{string(xmlContent)},
+			[]OvalV2DefinitionNamespaces{
+				{
+					[]string{"idm:DL1"},
+					[]CpeName{
+						{Part: "a", Vendor: "redhat", Product: "enterprise_linux", Version: "8", Update: "", Edition: "appstream", Language: ""},
+					},
+				},
+				{
+					[]string{"nodejs:12"},
+					[]CpeName{
+						{Part: "a", Vendor: "redhat", Product: "enterprise_linux", Version: "8", Update: "", Edition: "appstream", Language: ""},
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseDefinitionNamespaces(tt.args.ovalDefinitionsXml); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseDefinitionNamespaces() = %v, want %v", got, tt.want)
 			}
 		})
 	}
