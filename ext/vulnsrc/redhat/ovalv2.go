@@ -24,13 +24,13 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/quay/clair/v3/database"
+	"github.com/quay/clair/v3/pkg/httputil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -56,29 +56,40 @@ type ManifestEntry struct {
 
 type OvalV2Definitions struct {
 	XMLName xml.Name `xml:"oval_definitions"`
-	Advisories  []*OvalV2Advisory `xml:"definitions>definition>metadata>advisory"`
+	// Advisories  []*OvalV2Advisory `xml:"definitions>definition>metadata>advisory"`
+	Definitions      []*OvalV2Definition   `xml:"definitions>definition"`
+}
+
+// type OvalV2Definitions struct {
+// 	Definitions      []OvalV2Definition   `xml:"oval_definitions>definition"`
+// }
+
+type OvalV2Definition struct {
+	Metadata         OvalV2Metadata    `xml:"metadata"`
+	Criteria         OvalV2Criteria    `xml:"criteria"`
+}
+
+type OvalV2Metadata struct {
+	Advisory         OvalV2Advisory    `xml:"advisory"`
 }
 
 type OvalV2Advisory struct {
-    Issued    OvalV2AdvisoryIssued     `xml:"issued"`
-	Updated   OvalV2AdvisoryUpdated    `xml:"updated"`
-	Severity  string                   `xml:"severity"`
-	Cve       OvalV2CveData            `xml:"cve"`
-	AffectedCpeList   OvalV2Cpe        `xml:"affected_cpe_list"`
+    Issued           OvalV2AdvisoryIssued     `xml:"issued"`
+	Updated          OvalV2AdvisoryUpdated    `xml:"updated"`
+	Severity         string                   `xml:"severity"`
+	Cve              OvalV2CveData            `xml:"cve"`
+	AffectedCpeList  OvalV2Cpe                `xml:"affected_cpe_list"`
 }
 
 type OvalV2AdvisoryIssued struct {
-	// XMLName  xml.Name  `xml:"issued"`
     Date     string    `xml:"date,attr"`
 }
 
 type OvalV2AdvisoryUpdated struct {
-	// XMLName  xml.Name  `xml:"updated"`
     Date     string    `xml:"date,attr"`
 }
 
 type OvalV2CveData struct {
-	// XMLName  xml.Name  `xml:"cve"`
     Cvss3    string    `xml:"cvss3,attr"`
     Cwe      string    `xml:"cwe,attr"`
 	Href     string    `xml:"href,attr"`
@@ -99,19 +110,108 @@ type CpeName struct {
 	Language   string
 }
 
-func ParseNVRA(rpmName string) []string {
+type OvalV2Criteria struct {
+	Criterion    []OvalV2Criterion    `xml:"criterion"`
+	Criteria     []OvalV2Criteria     `xml:"criteria"`
+}
+
+type OvalV2Criterion struct {
+	XMLName  xml.Name  `xml:"criterion"`
+	Comment  string    `xml:"comment,attr"`
+	TestRef  string    `xml:"test_ref,attr"`
+}
+
+type OvalV2DefinitionNamespaces struct {
+	ModuleNamespaces  []string
+	CpeNamespaces     []CpeName
+}
+
+type RpmNvra struct {
+	Name     string
+	Version  string
+	Release  string
+	Arch     string
+}
+
+// parent call to parse entire doc
+func ParseDefinitionNamespaces(ovalDefinitionsXml string) []OvalV2DefinitionNamespaces {
+	ovalV2DefinitionNamespaces := []OvalV2DefinitionNamespaces{}
+	ovalDefinitions := OvalV2Definitions{}
+	err := xml.Unmarshal([]byte(ovalDefinitionsXml), &ovalDefinitions)
+	if err != nil {
+		panic(err)
+	}
+	for _, definition := range ovalDefinitions.Definitions {
+		criteriaNs, err := ParseCriteriaForModuleNamespaces(*definition)
+		if err != nil {
+			// log error and continue
+			log.Error(err)
+		}
+		cpeNames, err := ParseParseCpeNameFromAffectedCpeList(definition.Metadata.Advisory.AffectedCpeList)
+		if err != nil {
+			// log error and continue
+			log.Error(err)
+		}
+		ovalV2DefinitionNamespace := OvalV2DefinitionNamespaces{criteriaNs, cpeNames}
+		ovalV2DefinitionNamespaces = append(ovalV2DefinitionNamespaces, ovalV2DefinitionNamespace)
+	}
+	return ovalV2DefinitionNamespaces
+}
+
+// parse one definition
+func ParseCriteriaForModuleNamespaces(ovalDefinition OvalV2Definition) ([]string, error) {
+    var moduleNamespaces []string
+	criteria := extractAllCriterions(ovalDefinition.Criteria)
+	// walk the criteria and add them
+	for _, criterion := range criteria {
+		// Module idm:DL1 is enabled
+		var regexComment = regexp.MustCompile(`(Module )(.*)( is enabled)`)
+		matches := regexComment.FindStringSubmatch(criterion.Comment)
+		if matches != nil && len(matches) > 2 && matches[2] != "" {
+			moduleNamespaces = append(moduleNamespaces, matches[2])
+		}
+		// moduleNamespaces = append(moduleNamespaces, criterion.Comment)
+	}
+    return moduleNamespaces, nil
+}
+
+func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
+    var criterions []OvalV2Criterion
+    for _, criterion := range criteria.Criteria {
+        // recursively append criteria contents
+        criterions = append(criterions, extractAllCriterions(criterion)...)
+    }
+    for _, criterion := range criteria.Criterion {
+        // append criterion
+        criterions = append(criterions, criterion)
+    }
+    return criterions
+}
+
+func ParseNVRA(rpmName string) RpmNvra {
+	// parse NVRA from RPM name
+	// golang-1.6.3-2.el7.x86_64.rpm
+	// Name        : golang
+	// Version     : 1.6.3
+	// Release     : 2.el7
+	// Architecture: x86_64
 	var regexRpmNVRA = regexp.MustCompile(`(.*/)*(.*)-(.*)-(.*?)\.([^.]*)(\.rpm)`)
 	matches := regexRpmNVRA.FindStringSubmatch(rpmName)[2:6]
-	return matches
+	rpmNvra := RpmNvra{matches[0], matches[1], matches[2], matches[3]}
+	return rpmNvra
 }
 
 // parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
-func ParseParseCpeNameFromAffectedCpeList(affectedCpeList OvalV2Cpe) (CpeName, error) {
+func ParseParseCpeNameFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]CpeName, error) {
+	cpeNames := []CpeName{}
 	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
-		return CpeName{}, errors.New("unparseable affected cpe list")
+		return cpeNames, errors.New("unparseable affected cpe list")
 	}
-	// parse and return the second cpe entry from the list
-	return ParseCpeName(affectedCpeList.Cpe[1]), nil
+	// parse and return any entries after the first cpe entry from the list
+	for i := 1; i < len(affectedCpeList.Cpe); i++ {
+		cpeNames = append(cpeNames, ParseCpeName(affectedCpeList.Cpe[i]))
+	}
+	return cpeNames, nil
 }
 
 // parse cpe string
@@ -151,12 +251,11 @@ func getAdvisoriesSince(ovalDoc string, sinceDate string, datastore database.Dat
 		panic(err)
 	}
 	var advisories []OvalV2Advisory
-	// walk the advisories and add any which are after the db last advisory date
-	for _, advisory := range ovalDefinitions.Advisories {
+	for _, definition := range ovalDefinitions.Definitions {
 		// check if this entry has already been processed (based on its sha256 hash)
-		if IsAdvisorySinceDate(sinceDate, advisory.Issued.Date) {
+		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database
-			advisories = append(advisories, *advisory)
+			advisories = append(advisories, definition.Metadata.Advisory)
 		}
 	}
 	// debug-only info
@@ -177,7 +276,7 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
         log.Fatal("error parsing date string: " + advisoryDate)
 	}
 	// since dates are simple YYYY-MM-dd format, check not-before rather than after
-	// - err on the side of occasionally repeating advisory processing, 
+	// - err on the side of occasionally repeating advisory processing,
 	//   versus occasionally skipping new advisories which have the same simple date as already registered
 	return !advisoryTime.Before(sinceTime)
 }
@@ -196,9 +295,9 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	return dbLastAdvisoryDate
 }
 
-// update the db key/value table with the given last advisory date 
+// update the db key/value table with the given last advisory date
 func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datastore) {
-	err := database.UpdateKeyValueAndCommit(datastore, 
+	err := database.UpdateKeyValueAndCommit(datastore,
 		DbLastAdvisoryDateKey, lastAdvisoryDate)
 	if err != nil {
 		log.Fatal(err)
@@ -216,10 +315,10 @@ func ProcessPulpManifestEntries(manifestEntries []ManifestEntry, datastore datab
 	}
 }
 
-// update the db key/value table with the given manifest entry's signature 
+// update the db key/value table with the given manifest entry's signature
 func DbUpdateManifestEntrySignature(manifestEntry ManifestEntry, datastore database.Datastore) {
 	// store the latest sha256 hash for this entry
-	err := database.UpdateKeyValueAndCommit(datastore, 
+	err := database.UpdateKeyValueAndCommit(datastore,
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath, manifestEntry.Signature)
 	if err != nil {
 		log.Fatal(err)
@@ -229,7 +328,7 @@ func DbUpdateManifestEntrySignature(manifestEntry ManifestEntry, datastore datab
 // check the db key/value table to determine whether the given entry is new/updated
 //   since the last time the manifest was processed
 func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database.Datastore) bool {
-	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore, 
+	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore,
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath)
 	if err != nil {
 		log.Fatal(err)
@@ -244,7 +343,7 @@ func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database
 
 // fetch the PULP_MANIFEST file, return body as a string
 func FetchPulpManifest(pulpManifestUrl string) (string, error) {
-	resp, err := http.Get(pulpManifestUrl)
+	resp, err := httputil.GetWithUserAgent(pulpManifestUrl)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -284,9 +383,9 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 	}
 	data := strings.Split(srcManifestLine, ",")
 	if len(data) < 3 {
-		return entry, errors.New(fmt.Sprintf(
+		return entry, fmt.Errorf(
 			"Not enough elements (%d of 3) in source manifest line: %s",
-			len(data), srcManifestLine))
+			len(data), srcManifestLine)
 	}
 	entry.BzipPath = data[0]
 	entry.Signature = data[1]
@@ -301,7 +400,7 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 // decompress and read a bzip2-compressed oval file, return the xml content as string
 func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 	var stringbuilder strings.Builder
-	resp, err := http.Get(bzipOvalFile)
+	resp, err := httputil.GetWithUserAgent(bzipOvalFile)
 	if err != nil {
 		log.Error(err)
 		return "", err
