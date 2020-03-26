@@ -232,7 +232,7 @@ func TestParseParseCpeNameFromAffectedCpeList(t *testing.T) {
 	}{
 		// cpe:/a:redhat:ansible_engine:2.8::el8
 		{
-			"1", 
+			"1",
 			args{result.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]CpeName{
 				{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
@@ -327,7 +327,7 @@ func TestParseDefinitionNamespaces(t *testing.T) {
 		want []OvalV2DefinitionNamespaces
 	}{
 		{
-			"1", 
+			"1",
 			args{string(xmlContent)},
 			[]OvalV2DefinitionNamespaces{
 				{
@@ -349,6 +349,52 @@ func TestParseDefinitionNamespaces(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseDefinitionNamespaces(tt.args.ovalDefinitionsXml); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseDefinitionNamespaces() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRmpArchSupported(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"golang-1.6.3-2.el7.x86_64.rpm"}, true},
+		{"2", args{"golang-1.6.3-2.el7.noarch.rpm"}, true},
+		{"3", args{"golang-1.6.3-2.el7.ppcle64.rpm"}, false},
+		{"4", args{"golang-1.6.3-2.el7.rpm"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRmpArchSupported(tt.args.arch); got != tt.want {
+				t.Errorf("IsRmpArchSupported() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsArchSupported(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"x86_64"}, true},
+		{"2", args{"noarch"}, true},
+		{"3", args{"ppcle64"}, false},
+		{"4", args{""}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsArchSupported(tt.args.arch); got != tt.want {
+				t.Errorf("IsArchSupported() = %v, want %v", got, tt.want)
 			}
 		})
 	}

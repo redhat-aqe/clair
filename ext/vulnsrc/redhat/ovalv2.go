@@ -43,6 +43,8 @@ const (
 	AdvisoryDateFormat       = "2006-01-02"  // datetime format uses 'magical reference date'
 )
 
+var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
+
 type ManifestEntry struct {
 	// comma-delimited manifest entry line from PULP_MANIFEST
 	// format:
@@ -199,6 +201,14 @@ func ParseNVRA(rpmName string) RpmNvra {
 	matches := regexRpmNVRA.FindStringSubmatch(rpmName)[2:6]
 	rpmNvra := RpmNvra{matches[0], matches[1], matches[2], matches[3]}
 	return rpmNvra
+}
+
+func IsRmpArchSupported(rpmName string) bool {
+	return IsArchSupported(ParseNVRA(rpmName).Arch)
+}
+
+func IsArchSupported(arch string) bool {
+	return SupportedArches[arch]
 }
 
 // parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
