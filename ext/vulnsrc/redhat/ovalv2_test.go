@@ -32,6 +32,16 @@ const (
 	TestLastAdvisoryDate = "2019-11-01"
 )
 
+var LastAdvisoryDate = "2000-01-01"
+
+func GetLastAdvisoryDate() string {
+	return LastAdvisoryDate
+}
+
+func SetLastAdvisoryDate(d string) {
+	LastAdvisoryDate = d
+}
+
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 
 	manifestEntry_1 := ManifestEntry{
@@ -54,6 +64,114 @@ func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsNewOrUpdatedManifestEntry(tt.args.manifestEntry, tt.args.datastore); got != tt.want {
 				t.Errorf("IsNewOrUpdatedManifestEntry() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRmpArchSupported(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"golang-1.6.3-2.el7.x86_64.rpm"}, true},
+		{"2", args{"golang-1.6.3-2.el7.noarch.rpm"}, true},
+		{"3", args{"golang-1.6.3-2.el7.ppcle64.rpm"}, false},
+		{"4", args{"golang-1.6.3-2.el7.rpm"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRmpArchSupported(tt.args.arch); got != tt.want {
+				t.Errorf("IsRmpArchSupported() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsArchSupported(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"x86_64"}, true},
+		{"2", args{"noarch"}, true},
+		{"3", args{"ppcle64"}, false},
+		{"4", args{""}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsArchSupported(tt.args.arch); got != tt.want {
+				t.Errorf("IsArchSupported() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetUnprocessedAdvisories(t *testing.T) {
+	pwd, _ := os.Getwd()
+	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
+	xmlContent, err := ioutil.ReadFile(xmlFilePath)
+	if err != nil {
+		log.Fatal("error reading " + xmlFilePath)
+	}
+	type args struct {
+		ovalDoc   string
+		sinceDate string
+	}
+	tests := []struct {
+		name      string
+		args      args
+		wantCount int
+		wantErr   bool
+	}{
+		{"1", args{string(xmlContent), "2020-01-22"}, 1, false},
+		{"2", args{string(xmlContent), "2019-10-25"}, 2, false},
+		{"3", args{string(xmlContent), "2019-10-23"}, 3, false},
+		{"4", args{string(xmlContent), "2019-08-21"}, 4, false},
+		{"5", args{string(xmlContent), "2019-07-01"}, 5, false},
+	}
+	for _, tt := range tests {
+		SetLastAdvisoryDate(tt.args.sinceDate)
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetAdvisoriesSinceLastDbUpdate(tt.args.ovalDoc, newmockDatastore())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetAdvisoriesSinceLastDbUpdate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantCount != len(got) {
+				t.Errorf("GetAdvisoriesSinceLastDbUpdate() = %v, want %v", len(got), tt.wantCount)
+			}
+		})
+	}
+}
+
+func TestDbLookupLastAdvisoryDate(t *testing.T) {
+	type args struct {
+		datastore database.Datastore
+		sinceDate string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{"1", args{newmockDatastore(), TestLastAdvisoryDate}, TestLastAdvisoryDate},
+		{"2", args{newmockDatastore(), "2019-07-01"}, "2019-07-01"},
+		{"3", args{newmockDatastore(), "2019-11-04"}, "2019-11-04"},
+	}
+	for _, tt := range tests {
+		SetLastAdvisoryDate(tt.args.sinceDate)
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DbLookupLastAdvisoryDate(tt.args.datastore); got != tt.want {
+				t.Errorf("DbLookupLastAdvisoryDate() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -149,63 +267,6 @@ func TestReadBzipOvalFile(t *testing.T) {
 	}
 }
 
-func TestGetUnprocessedAdvisories(t *testing.T) {
-	pwd, _ := os.Getwd()
-	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
-	xmlContent, err := ioutil.ReadFile(xmlFilePath)
-	if err != nil {
-		log.Fatal("error reading " + xmlFilePath)
-	}
-	type args struct {
-		ovalDoc   string
-		sinceDate string
-	}
-	tests := []struct {
-		name      string
-		args      args
-		wantCount int
-		wantErr   bool
-	}{
-		{"1", args{string(xmlContent), "2020-01-22"}, 1, false},
-		{"2", args{string(xmlContent), "2019-10-25"}, 2, false},
-		{"3", args{string(xmlContent), "2019-10-23"}, 3, false},
-		{"4", args{string(xmlContent), "2019-08-21"}, 4, false},
-		{"5", args{string(xmlContent), "2019-07-01"}, 5, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := getAdvisoriesSince(tt.args.ovalDoc, tt.args.sinceDate, newmockDatastore())
-			if (err != nil) != tt.wantErr {
-				t.Errorf("getAdvisoriesSince() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if tt.wantCount != len(got) {
-				t.Errorf("getAdvisoriesSince() = %v, want %v", len(got), tt.wantCount)
-			}
-		})
-	}
-}
-
-func TestDbLookupLastAdvisoryDate(t *testing.T) {
-	type args struct {
-		datastore database.Datastore
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{"1", args{newmockDatastore()}, TestLastAdvisoryDate},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := DbLookupLastAdvisoryDate(tt.args.datastore); got != tt.want {
-				t.Errorf("DbLookupLastAdvisoryDate() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseParseCpeNameFromAffectedCpeList(t *testing.T) {
 	pwd, _ := os.Getwd()
 	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
@@ -233,7 +294,7 @@ func TestParseParseCpeNameFromAffectedCpeList(t *testing.T) {
 		// cpe:/a:redhat:ansible_engine:2.8::el8
 		{
 			"1",
-			args{result.Definitions[0].Metadata.Advisory.AffectedCpeList},
+			args{result.DefinitionSet.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]CpeName{
 				{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
 			},
@@ -354,52 +415,6 @@ func TestParseDefinitionNamespaces(t *testing.T) {
 	}
 }
 
-func TestIsRmpArchSupported(t *testing.T) {
-	type args struct {
-		arch string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"1", args{"golang-1.6.3-2.el7.x86_64.rpm"}, true},
-		{"2", args{"golang-1.6.3-2.el7.noarch.rpm"}, true},
-		{"3", args{"golang-1.6.3-2.el7.ppcle64.rpm"}, false},
-		{"4", args{"golang-1.6.3-2.el7.rpm"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsRmpArchSupported(tt.args.arch); got != tt.want {
-				t.Errorf("IsRmpArchSupported() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsArchSupported(t *testing.T) {
-	type args struct {
-		arch string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"1", args{"x86_64"}, true},
-		{"2", args{"noarch"}, true},
-		{"3", args{"ppcle64"}, false},
-		{"4", args{""}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsArchSupported(tt.args.arch); got != tt.want {
-				t.Errorf("IsArchSupported() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 type mockDatastore struct {
 	database.MockDatastore
 
@@ -420,7 +435,7 @@ func copyDatastore(md *mockDatastore) mockDatastore {
 		DbManifestEntryKeyPrefix + "RHEL7/ansible-2.9.oval.xml.bz2": "109f1d47b6221333fce2d54052a7cdb9ef50bd29adf964c18f054f4aac62beaa",
 		DbManifestEntryKeyPrefix + "RHEL8/ansible-2.8.oval.xml.bz2": "14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed",
 		DbManifestEntryKeyPrefix + "RHEL8/ansible-2.9.oval.xml.bz2": "6e6edbcaf0bb3bac108a796d7fb2d2c4f637f581d6c6d2bb8d0d0a87294d4460",
-		DbLastAdvisoryDateKey: TestLastAdvisoryDate,
+		DbLastAdvisoryDateKey: GetLastAdvisoryDate(),
 	}
 	for key, value := range md.keyValues {
 		kv[key] = value
