@@ -31,6 +31,7 @@ import (
 
 	"github.com/quay/clair/v3/database"
 	"github.com/quay/clair/v3/pkg/httputil"
+	"github.com/quay/clair/v3/ext/vulnsrc"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,11 +40,15 @@ const (
 	PulpManifest             = "PULP_MANIFEST"
 	DbManifestEntryKeyPrefix = "oval.v2.pulp.manifest.entry."
 	DbLastAdvisoryDateKey    = "oval.v2.advisory.date.issued"
-	DefaultLastAdvisoryDate  = "1970-01-01"
-	AdvisoryDateFormat       = "2006-01-02"  // datetime format uses 'magical reference date'
+	DefaultLastAdvisoryDate  = "1970-01-01"          // literal date (in case no existing last advisory date is found)
+	AdvisoryDateFormat       = "2006-01-02"          // 'magical reference date' for datetime format
+	UpdaterFlag              = "RedHatOvalV2Updater"
+	UpdaterFlagDateFormat    = "2006-01-02 15:04:05" // 'magical reference date' for datetime format
 )
 
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
+
+type updater struct{}
 
 type ManifestEntry struct {
 	// comma-delimited manifest entry line from PULP_MANIFEST
@@ -58,15 +63,18 @@ type ManifestEntry struct {
 
 type OvalV2Definitions struct {
 	XMLName xml.Name `xml:"oval_definitions"`
-	// Advisories  []*OvalV2Advisory `xml:"definitions>definition>metadata>advisory"`
-	Definitions      []*OvalV2Definition   `xml:"definitions>definition"`
+	DefinitionSet    OvalV2AdvisoryDefinitions     `xml:"definitions"`
+	TestSet			 OvalV2Tests                   `xml:"tests"`
+	StateSet         OvalV2States                  `xml:"states"`
 }
 
-// type OvalV2Definitions struct {
-// 	Definitions      []OvalV2Definition   `xml:"oval_definitions>definition"`
-// }
+type OvalV2AdvisoryDefinitions struct {
+	Definitions      []OvalV2AdvisoryDefinition    `xml:"definition"`
+}
 
-type OvalV2Definition struct {
+type OvalV2AdvisoryDefinition struct {
+	Id               string            `xml:"id,attr"`
+	Version          string            `xml:"version,attr`
 	Metadata         OvalV2Metadata    `xml:"metadata"`
 	Criteria         OvalV2Criteria    `xml:"criteria"`
 }
@@ -113,14 +121,52 @@ type CpeName struct {
 }
 
 type OvalV2Criteria struct {
-	Criterion    []OvalV2Criterion    `xml:"criterion"`
-	Criteria     []OvalV2Criteria     `xml:"criteria"`
+	Criterion   []OvalV2Criterion     `xml:"criterion"`
+	Criteria    []OvalV2Criteria      `xml:"criteria"`
 }
 
 type OvalV2Criterion struct {
-	XMLName  xml.Name  `xml:"criterion"`
-	Comment  string    `xml:"comment,attr"`
-	TestRef  string    `xml:"test_ref,attr"`
+	XMLName     xml.Name              `xml:"criterion"`
+	Comment     string                `xml:"comment,attr"`
+	TestRef     string                `xml:"test_ref,attr"`
+}
+
+type OvalV2Tests struct {
+	XMLName     xml.Name              `xml:"tests"`
+	Tests       []OvalV2RpmInfoTest   `xml:"rpminfo_test"`
+}
+
+type OvalV2RpmInfoTest struct {
+	Comment     string                `xml:"comment,attr"`
+	Id          string                `xml:"id,attr"`
+	ObjectRef   RpmInfoTestObjectRef  `xml:"object"`
+	StateRef    RpmInfoTestStateRef   `xml:"state"`
+}
+
+type RpmInfoTestObjectRef struct {
+	Ref   string                `xml:"object_ref,attr"`
+}
+
+type RpmInfoTestStateRef struct {
+	Ref    string                `xml:"state_ref,attr"`
+}
+
+type OvalV2States struct {
+	XMLName     xml.Name              `xml:"states"`
+	States      []OvalV2RpmInfoState  `xml:"rpminfo_state"`
+}
+
+type OvalV2RpmInfoState struct {
+	Id          string                `xml:"id,attr"`
+	Version     string                `xml:"versin,attr"`
+	Arch        RpmInfoStateChild     `xml:"arch"`
+	Evr         RpmInfoStateChild     `xml:"evr"`
+}
+
+type RpmInfoStateChild struct {
+	DataType    string                `xml:"datatype,attr"`
+	Operation   string                `xml:"operation,attr"`
+	Value       string                `xml:",chardata"`
 }
 
 type OvalV2DefinitionNamespaces struct {
@@ -135,6 +181,87 @@ type RpmNvra struct {
 	Arch     string
 }
 
+func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
+	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
+
+	pulpManifestBody, err := FetchPulpManifest(PulpV2BaseURL + PulpManifest)
+	if err != nil {
+		log.Debug("Unable to fetch pulp manifest file: " + PulpV2BaseURL + PulpManifest)
+		return resp, err
+	}
+	pulpManifestEntries := ParsePulpManifest(pulpManifestBody)
+
+	unprocessedAdvisories, err := GatherUnprocessedPulpManifestAdvisories(pulpManifestEntries, datastore)
+	if err != nil {
+		// log error and continue
+		log.Error(err)
+	}
+	if len(unprocessedAdvisories) < 1 {
+		log.Info("Successful update, no unprocessed advisories found.")
+		return resp, nil
+	}
+
+	log.WithFields(log.Fields{
+		"items":   len(unprocessedAdvisories),
+		"updater": "RedHat",
+	}).Debug("Start processing advisories")
+
+	resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities()...)
+
+	// update the resp flag with summary of found
+	if len(unprocessedAdvisories) > 0 {
+		resp.FlagName = UpdaterFlag
+		resp.FlagValue = time.Now().Format(UpdaterFlagDateFormat)
+	} else {
+		log.WithField("package", "Red Hat").Debug("no update")
+	}
+
+	return resp, nil
+}
+
+func CollectVulnerabilities() (vulnerabilities []database.VulnerabilityWithAffected) {
+	// TODO: restore impl (removed for refactor)
+	return vulnerabilities
+}
+
+// TODO: refactor this out to group unprocessed advisories by menifest entry
+// gather any non-processed pulp manifest entry advisories
+func GatherUnprocessedPulpManifestAdvisories(manifestEntries []ManifestEntry, datastore database.Datastore) ([]OvalV2AdvisoryDefinition, error) {
+	unprocessedAdvisories := []OvalV2AdvisoryDefinition{}
+	for _, manifestEntry := range manifestEntries {
+		// check if this entry has already been processed (based on its sha256 hash)
+		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
+			// this is new/updated, process it now
+			log.Debug("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
+			// unzip and read the bzip-compressed oval file into a string
+			ovalList, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
+			if err != nil {
+				// log error and continue
+				log.Error(err)
+				continue
+			}
+			// get all unprocessed advisories from the oval file
+			foundAdvisories, err := GetAdvisoriesSinceLastDbUpdate(ovalList, datastore)
+			if err != nil {
+				// log error and continue
+				log.Error(err)
+				continue
+			} else {
+				// append found advisories to the to-be-processed list
+				unprocessedAdvisories = append(unprocessedAdvisories, foundAdvisories...)
+				// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
+				DbUpdateManifestEntrySignature(manifestEntry, datastore)
+			}
+		} else {
+			// this pulp manifest entry has already been processed; log and skip it
+			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
+			continue
+		}
+	}
+
+	return unprocessedAdvisories, nil
+}
+
 // parent call to parse entire doc
 func ParseDefinitionNamespaces(ovalDefinitionsXml string) []OvalV2DefinitionNamespaces {
 	ovalV2DefinitionNamespaces := []OvalV2DefinitionNamespaces{}
@@ -143,8 +270,9 @@ func ParseDefinitionNamespaces(ovalDefinitionsXml string) []OvalV2DefinitionName
 	if err != nil {
 		panic(err)
 	}
-	for _, definition := range ovalDefinitions.Definitions {
-		criteriaNs, err := ParseCriteriaForModuleNamespaces(*definition)
+	// for _, definition := range ovalDefinitions.Definitions {
+	for _, definition := range ovalDefinitions.DefinitionSet.Definitions {
+		criteriaNs, err := ParseCriteriaForModuleNamespaces(definition)
 		if err != nil {
 			// log error and continue
 			log.Error(err)
@@ -161,9 +289,9 @@ func ParseDefinitionNamespaces(ovalDefinitionsXml string) []OvalV2DefinitionName
 }
 
 // parse one definition
-func ParseCriteriaForModuleNamespaces(ovalDefinition OvalV2Definition) ([]string, error) {
+func ParseCriteriaForModuleNamespaces(ovalAdvisoryDefinition OvalV2AdvisoryDefinition) ([]string, error) {
     var moduleNamespaces []string
-	criteria := extractAllCriterions(ovalDefinition.Criteria)
+	criteria := extractAllCriterions(ovalAdvisoryDefinition.Criteria)
 	// walk the criteria and add them
 	for _, criterion := range criteria {
 		// Module idm:DL1 is enabled
@@ -175,6 +303,31 @@ func ParseCriteriaForModuleNamespaces(ovalDefinition OvalV2Definition) ([]string
 		// moduleNamespaces = append(moduleNamespaces, criterion.Comment)
 	}
     return moduleNamespaces, nil
+}
+
+func ParseCriteriaForStateData(ovalAdvisoryDefinition OvalV2AdvisoryDefinition, ovalV2Definitions OvalV2Definitions) []OvalV2RpmInfoState {
+	var stateData []OvalV2RpmInfoState 
+	criteria := extractAllCriterions(ovalAdvisoryDefinition.Criteria)
+	// walk the criteria and add them
+    for _, criterion := range criteria {
+		stateData = append(stateData, FindRelatedStateData(criterion.TestRef, ovalV2Definitions)...)
+	}
+	return stateData
+}
+
+func FindRelatedStateData(testRef string, ovalV2Definitions OvalV2Definitions) []OvalV2RpmInfoState {
+	var stateData []OvalV2RpmInfoState
+    for _, test := range ovalV2Definitions.TestSet.Tests {
+		if test.Id == testRef {
+			stateRefId := test.StateRef.Ref
+			for _, state := range ovalV2Definitions.StateSet.States {
+				if (state.Id == stateRefId) {
+					stateData = append(stateData, state)
+				}
+			}
+		}
+	}
+	return stateData
 }
 
 func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
@@ -245,12 +398,7 @@ func ParseCpeName(cpeNameString string) CpeName {
 }
 
 // get advisories from the given oval xml which were issued since the last update (based on db value)
-func GetAdvisoriesSinceLastDbUpdate(ovalDoc string, datastore database.Datastore) ([]OvalV2Advisory, error) {
-	return getAdvisoriesSince(ovalDoc, DbLookupLastAdvisoryDate(datastore), datastore)
-}
-
-// get advisories from the given oval xml which were issued since the given date (to support more flexible testing)
-func getAdvisoriesSince(ovalDoc string, sinceDate string, datastore database.Datastore) ([]OvalV2Advisory, error) {
+func GetAdvisoriesSinceLastDbUpdate(ovalDoc string, datastore database.Datastore) ([]OvalV2AdvisoryDefinition, error) {
 	if (ovalDoc == "") {
 		return nil, errors.New("Cannot parse empty source oval doc")
 	}
@@ -260,17 +408,31 @@ func getAdvisoriesSince(ovalDoc string, sinceDate string, datastore database.Dat
 	if err != nil {
 		panic(err)
 	}
-	var advisories []OvalV2Advisory
-	for _, definition := range ovalDefinitions.Definitions {
+	sinceDate := DbLookupLastAdvisoryDate(datastore)
+	var advisories []OvalV2AdvisoryDefinition
+	for _, definition := range ovalDefinitions.DefinitionSet.Definitions {
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
-			// this advisory was issued since the last advisory date in the database
-			advisories = append(advisories, definition.Metadata.Advisory)
+			// this advisory was issued since the last advisory date in the database; add it
+			advisories = append(advisories, definition)
+		} else if IsAdvisorySameDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
+			// advisory date is coarse (YYYY-MM-dd format) date only,
+			// so it's possible that we'll see an advisory multiple times within the same day;
+			// check the db in this case to be sure
+			if (!DbLookupIsAdvisoryProcessed(definition.Id, definition.Version, datastore)) {
+				// this advisory id/version hasn't been processed yet; add it
+				advisories = append(advisories, definition)
+				// update the db ky/value entry for this advisory
+				DbStoreAdvisoryProcessed(definition.Id, definition.Version, datastore)
+			}
 		}
 	}
 	// debug-only info
 	out, _ := xml.MarshalIndent(ovalDefinitions, " ", "  ")
 	log.Debug(string(out))
+
+	// update the db ky/value entry for the last advisory processed date (now, as coarse YYYY-MM-dd format)
+	DbStoreLastAdvisoryDate(time.Now().Format(AdvisoryDateFormat), datastore)
 	
 	return advisories, nil
 }
@@ -285,10 +447,20 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
     if err != nil {
         log.Fatal("error parsing date string: " + advisoryDate)
 	}
-	// since dates are simple YYYY-MM-dd format, check not-before rather than after
-	// - err on the side of occasionally repeating advisory processing,
-	//   versus occasionally skipping new advisories which have the same simple date as already registered
-	return !advisoryTime.Before(sinceTime)
+	return advisoryTime.After(sinceTime)
+}
+
+// determine whether the given advisory date string is the same as the last update
+func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
+	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
+    if err != nil {
+        log.Fatal("error parsing date string: " + sinceDate)
+	}
+	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
+    if err != nil {
+        log.Fatal("error parsing date string: " + advisoryDate)
+	}
+	return advisoryTime.Equal(sinceTime)
 }
 
 // lookup the last advisory date from db key/value table
@@ -314,14 +486,26 @@ func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datasto
 	}
 }
 
-// process any non-processed pulp manifest entries
-func ProcessPulpManifestEntries(manifestEntries []ManifestEntry, datastore database.Datastore) {
-	for _, manifestEntry := range manifestEntries {
-		// check if this entry has already been processed (based on its sha256 hash)
-		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
-			// this is a new unprocessed update, process it now
-			DbUpdateManifestEntrySignature(manifestEntry, datastore)
-		}
+// check the db key/value table for the given advisory's id, compare the stored 'version' value to current
+func DbLookupIsAdvisoryProcessed(id string, currentVersion string, datastore database.Datastore) bool {
+	foundAdvisoryVersion, ok, err := database.FindKeyValueAndRollback(datastore, id)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if ok == false {
+		// no record found, so assume it hasn't been processed
+		return false
+	}
+	// compare the found version to the current version
+	return currentVersion == foundAdvisoryVersion
+}
+
+// update the db key/value table with the given last advisory date
+func DbStoreAdvisoryProcessed(id string, currentVersion string, datastore database.Datastore) {
+	err := database.UpdateKeyValueAndCommit(datastore,
+		id, currentVersion)
+	if err != nil {
+		log.Fatal(err)
 	}
 }
 
