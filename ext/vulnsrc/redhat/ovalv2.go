@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/quay/clair/v3/database"
+	"github.com/quay/clair/v3/ext/versionfmt/modulerpm"
 	"github.com/quay/clair/v3/pkg/httputil"
 	"github.com/quay/clair/v3/ext/vulnsrc"
 	log "github.com/sirupsen/logrus"
@@ -44,6 +45,8 @@ const (
 	AdvisoryDateFormat       = "2006-01-02"          // 'magical reference date' for datetime format
 	UpdaterFlag              = "RedHatOvalV2Updater"
 	UpdaterFlagDateFormat    = "2006-01-02 15:04:05" // 'magical reference date' for datetime format
+	AffectedType             = database.BinaryPackage
+	CveURL                   = "https://access.redhat.com/security/cve/"
 )
 
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
@@ -61,10 +64,11 @@ type ManifestEntry struct {
 	Size      int    // 3755
 }
 
-type OvalV2Definitions struct {
-	XMLName xml.Name `xml:"oval_definitions"`
+type OvalV2Document struct {
+	XMLName          xml.Name                      `xml:"oval_definitions"`
 	DefinitionSet    OvalV2AdvisoryDefinitions     `xml:"definitions"`
 	TestSet			 OvalV2Tests                   `xml:"tests"`
+	ObjectSet	     OvalV2Objects                 `xml:"objects"`
 	StateSet         OvalV2States                  `xml:"states"`
 }
 
@@ -80,6 +84,8 @@ type OvalV2AdvisoryDefinition struct {
 }
 
 type OvalV2Metadata struct {
+	Title            string            `xml:"title"`
+	Description      string            `xml:"description"`
 	Advisory         OvalV2Advisory    `xml:"advisory"`
 }
 
@@ -87,7 +93,7 @@ type OvalV2Advisory struct {
     Issued           OvalV2AdvisoryIssued     `xml:"issued"`
 	Updated          OvalV2AdvisoryUpdated    `xml:"updated"`
 	Severity         string                   `xml:"severity"`
-	Cve              OvalV2CveData            `xml:"cve"`
+	CveList          []OvalV2CveData          `xml:"cve"`
 	AffectedCpeList  OvalV2Cpe                `xml:"affected_cpe_list"`
 }
 
@@ -100,10 +106,12 @@ type OvalV2AdvisoryUpdated struct {
 }
 
 type OvalV2CveData struct {
+	XMLName  xml.Name  `xml:"cve"`
     Cvss3    string    `xml:"cvss3,attr"`
     Cwe      string    `xml:"cwe,attr"`
 	Href     string    `xml:"href,attr"`
 	Public   string    `xml:"public,attr"`
+	Value    string    `xml:",chardata"`
 }
 
 type OvalV2Cpe struct {
@@ -151,6 +159,17 @@ type RpmInfoTestStateRef struct {
 	Ref    string                `xml:"state_ref,attr"`
 }
 
+type OvalV2Objects struct {
+	XMLName     xml.Name              `xml:"objects"`
+	Objects     []OvalV2RpmInfoObject `xml:"rpminfo_object"`
+}
+
+type OvalV2RpmInfoObject struct {
+	Id          string                `xml:"id,attr"`
+	Version     string                `xml:"version,attr"`
+	Name        string                `xml:"name"`
+}
+
 type OvalV2States struct {
 	XMLName     xml.Name              `xml:"states"`
 	States      []OvalV2RpmInfoState  `xml:"rpminfo_state"`
@@ -158,7 +177,7 @@ type OvalV2States struct {
 
 type OvalV2RpmInfoState struct {
 	Id          string                `xml:"id,attr"`
-	Version     string                `xml:"versin,attr"`
+	Version     string                `xml:"version,attr"`
 	Arch        RpmInfoStateChild     `xml:"arch"`
 	Evr         RpmInfoStateChild     `xml:"evr"`
 }
@@ -181,6 +200,20 @@ type RpmNvra struct {
 	Arch     string
 }
 
+type ParsedAdvisory struct {
+	Id               string
+	Version          string
+	Metadata         OvalV2Metadata
+	Criteria         OvalV2Criteria
+	PackageList      []ParsedRmpNvra
+}
+
+type ParsedRmpNvra struct {
+	Name     string
+	Evr      string
+	Arch     string
+}
+
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
@@ -191,25 +224,61 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	}
 	pulpManifestEntries := ParsePulpManifest(pulpManifestBody)
 
-	unprocessedAdvisories, err := GatherUnprocessedPulpManifestAdvisories(pulpManifestEntries, datastore)
-	if err != nil {
-		// log error and continue
-		log.Error(err)
-	}
-	if len(unprocessedAdvisories) < 1 {
-		log.Info("Successful update, no unprocessed advisories found.")
-		return resp, nil
-	}
+	// walk the set of pulpManifestEntries
+	for _, manifestEntry := range pulpManifestEntries {
+		// check if this entry has already been processed (based on its sha256 hash)
+		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
+			unprocessedAdvisories := []ParsedAdvisory{}
+			// this is new/updated, process it now
+			log.Debug("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
 
-	log.WithFields(log.Fields{
-		"items":   len(unprocessedAdvisories),
-		"updater": "RedHat",
-	}).Debug("Start processing advisories")
+			// unzip and read the bzip-compressed oval file into an xml string
+			ovalXml, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
+			if err != nil {
+				// log error and continue
+				log.Error(err)
+				continue
+			}
+			if (ovalXml == "") {
+				log.Error("Cannot parse empty source oval doc")
+				continue
+			}
+			//
+			ovalDoc := OvalV2Document{}
+			err = xml.Unmarshal([]byte(ovalXml), &ovalDoc)
+			if err != nil {
+				// log error and continue
+				log.Error(err)
+				continue
+			}
 
-	resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities()...)
+			unprocessedAdvisories, err = GatherUnprocessedAdvisories(manifestEntry, ovalDoc, datastore)
+			if err != nil {
+				// log error and continue
+				log.Error(err)
+				continue
+			}
+			if len(unprocessedAdvisories) < 1 {
+				log.Info("Successful update, no unprocessed advisories found.")
+				continue
+			}
+
+			log.WithFields(log.Fields{
+				"items":   len(unprocessedAdvisories),
+				"updater": "RedHat",
+			}).Debug("Start processing advisories")
+
+			resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities(unprocessedAdvisories, ovalDoc)...)
+
+		} else {
+			// this pulp manifest entry has already been processed; log and skip it
+			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
+		}
+	
+	}
 
 	// update the resp flag with summary of found
-	if len(unprocessedAdvisories) > 0 {
+	if len(resp.Vulnerabilities) > 0 {
 		resp.FlagName = UpdaterFlag
 		resp.FlagValue = time.Now().Format(UpdaterFlagDateFormat)
 	} else {
@@ -219,115 +288,158 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	return resp, nil
 }
 
-func CollectVulnerabilities() (vulnerabilities []database.VulnerabilityWithAffected) {
-	// TODO: restore impl (removed for refactor)
-	return vulnerabilities
-}
-
-// TODO: refactor this out to group unprocessed advisories by menifest entry
 // gather any non-processed pulp manifest entry advisories
-func GatherUnprocessedPulpManifestAdvisories(manifestEntries []ManifestEntry, datastore database.Datastore) ([]OvalV2AdvisoryDefinition, error) {
-	unprocessedAdvisories := []OvalV2AdvisoryDefinition{}
-	for _, manifestEntry := range manifestEntries {
-		// check if this entry has already been processed (based on its sha256 hash)
-		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
-			// this is new/updated, process it now
-			log.Debug("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
-			// unzip and read the bzip-compressed oval file into a string
-			ovalList, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
-			if err != nil {
-				// log error and continue
-				log.Error(err)
-				continue
-			}
-			// get all unprocessed advisories from the oval file
-			foundAdvisories, err := GetAdvisoriesSinceLastDbUpdate(ovalList, datastore)
-			if err != nil {
-				// log error and continue
-				log.Error(err)
-				continue
-			} else {
-				// append found advisories to the to-be-processed list
-				unprocessedAdvisories = append(unprocessedAdvisories, foundAdvisories...)
-				// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
-				DbUpdateManifestEntrySignature(manifestEntry, datastore)
-			}
-		} else {
-			// this pulp manifest entry has already been processed; log and skip it
-			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
-			continue
-		}
+func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
+	unprocessedAdvisories := []ParsedAdvisory{}
+	
+	// get all unprocessed advisories from the oval file
+	foundAdvisories, err := ProcessAdvisoriesSinceLastDbUpdate(ovalDoc, datastore)
+	if err != nil {
+		// log error and continue
+		log.Error(err)
+		return unprocessedAdvisories, err
+	} else {
+		// append found advisories to the to-be-processed list
+		unprocessedAdvisories = append(unprocessedAdvisories, foundAdvisories...)
+		// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
+		DbUpdateManifestEntrySignature(manifestEntry, datastore)
 	}
 
 	return unprocessedAdvisories, nil
 }
 
-// parent call to parse entire doc
-func ParseDefinitionNamespaces(ovalDefinitionsXml string) []OvalV2DefinitionNamespaces {
-	ovalV2DefinitionNamespaces := []OvalV2DefinitionNamespaces{}
-	ovalDefinitions := OvalV2Definitions{}
-	err := xml.Unmarshal([]byte(ovalDefinitionsXml), &ovalDefinitions)
-	if err != nil {
-		panic(err)
+func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
+	// walk the provided set of advisory definitions
+	for _, advisoryDefinition := range advisoryDefinitions {
+		vulnerabilities = append(vulnerabilities, CollectVulnsForAdvisory(advisoryDefinition, ovalDoc)...)
 	}
-	// for _, definition := range ovalDefinitions.Definitions {
-	for _, definition := range ovalDefinitions.DefinitionSet.Definitions {
-		criteriaNs, err := ParseCriteriaForModuleNamespaces(definition)
-		if err != nil {
-			// log error and continue
-			log.Error(err)
-		}
-		cpeNames, err := ParseParseCpeNameFromAffectedCpeList(definition.Metadata.Advisory.AffectedCpeList)
-		if err != nil {
-			// log error and continue
-			log.Error(err)
-		}
-		ovalV2DefinitionNamespace := OvalV2DefinitionNamespaces{criteriaNs, cpeNames}
-		ovalV2DefinitionNamespaces = append(ovalV2DefinitionNamespaces, ovalV2DefinitionNamespace)
-	}
-	return ovalV2DefinitionNamespaces
+	return vulnerabilities
 }
 
-// parse one definition
-func ParseCriteriaForModuleNamespaces(ovalAdvisoryDefinition OvalV2AdvisoryDefinition) ([]string, error) {
-    var moduleNamespaces []string
-	criteria := extractAllCriterions(ovalAdvisoryDefinition.Criteria)
-	// walk the criteria and add them
-	for _, criterion := range criteria {
-		// Module idm:DL1 is enabled
-		var regexComment = regexp.MustCompile(`(Module )(.*)( is enabled)`)
-		matches := regexComment.FindStringSubmatch(criterion.Comment)
-		if matches != nil && len(matches) > 2 && matches[2] != "" {
-			moduleNamespaces = append(moduleNamespaces, matches[2])
+// get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
+func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
+	for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
+		packageMap := make(map[string]bool)
+		vulnerability := database.VulnerabilityWithAffected{
+			Vulnerability: database.Vulnerability{
+				Name:        cve.Value + " - " + ParseRhsaName(advisoryDefinition),
+				Link:        CveURL + cve.Value,
+				Severity:    GetSeverity(advisoryDefinition.Metadata.Advisory.Severity),
+				Description: advisoryDefinition.Metadata.Description,
+			},
 		}
-		// moduleNamespaces = append(moduleNamespaces, criterion.Comment)
-	}
-    return moduleNamespaces, nil
-}
+		packageList := GetPackageList(advisoryDefinition.Criteria, ovalDoc)
+		for _, parsedRmpNvra := range packageList {
+			if !IsArchSupported(parsedRmpNvra.Arch) {
+				continue
+			}
+			key := parsedRmpNvra.Name + parsedRmpNvra.Evr
+			ok := packageMap[key]
+			if ok {
+				// filter out duplicated features (arch specific)
+				continue
+			}
+			packageMap[key] = true
 
-func ParseCriteriaForStateData(ovalAdvisoryDefinition OvalV2AdvisoryDefinition, ovalV2Definitions OvalV2Definitions) []OvalV2RpmInfoState {
-	var stateData []OvalV2RpmInfoState 
-	criteria := extractAllCriterions(ovalAdvisoryDefinition.Criteria)
-	// walk the criteria and add them
-    for _, criterion := range criteria {
-		stateData = append(stateData, FindRelatedStateData(criterion.TestRef, ovalV2Definitions)...)
-	}
-	return stateData
-}
-
-func FindRelatedStateData(testRef string, ovalV2Definitions OvalV2Definitions) []OvalV2RpmInfoState {
-	var stateData []OvalV2RpmInfoState
-    for _, test := range ovalV2Definitions.TestSet.Tests {
-		if test.Id == testRef {
-			stateRefId := test.StateRef.Ref
-			for _, state := range ovalV2Definitions.StateSet.States {
-				if (state.Id == stateRefId) {
-					stateData = append(stateData, state)
+			feature := database.AffectedFeature{
+				FeatureName:     parsedRmpNvra.Name,
+				AffectedVersion: parsedRmpNvra.Evr,
+				FixedInVersion:  parsedRmpNvra.Evr,
+				FeatureType:     AffectedType,
+			}
+			moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
+			if len(moduleNamespaces) > 0 {
+				// modular rpm has namespace made of module_name:stream
+				feature.Namespace = database.Namespace{
+					Name:          moduleNamespaces[0],
+					VersionFormat: modulerpm.ParserName,
+				}
+				vulnerability.Affected = append(vulnerability.Affected, feature)
+			} else {
+				// normal rpm uses CPE namespaces
+				cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
+				if err != nil {
+					// log error and continue
+					log.Error(err)
+					continue
+				}
+				if len(cpeNames) == 0 {
+					log.Warning(fmt.Sprintf("No CPE for: %s %s %s", parsedRmpNvra.Name, parsedRmpNvra.Evr, advisoryDefinition.Metadata.Title))
+				}
+				for _, cpe := range cpeNames {
+					feature.Namespace = database.Namespace{
+						Name:          cpe,
+						VersionFormat: modulerpm.ParserName,
+					}
+					vulnerability.Affected = append(vulnerability.Affected, feature)
 				}
 			}
+
+		}
+		if len(vulnerability.Affected) > 0 {
+			vulnerabilities = append(vulnerabilities, vulnerability)
 		}
 	}
-	return stateData
+	return
+}
+
+// construct the vulnerability name(s) from the given advisory definition
+func ConstructVulnerabilityNames(advisoryDefinition ParsedAdvisory) []string {
+	rhsaName := ParseRhsaName(advisoryDefinition)
+	var vulnNames []string
+	cveNames := ParseCveNames(advisoryDefinition)
+	for _, cveName := range cveNames {
+		vulnNames = append(vulnNames, cveName + " - " + rhsaName)
+	}
+	return vulnNames
+}
+
+// construct the []VulnerabilityID set from the given advisory definition
+func ConstructVulnerabilityIDs(advisoryDefinition ParsedAdvisory) []database.VulnerabilityID {
+	var vulnIDs []database.VulnerabilityID
+	rhsaName := ParseRhsaName(advisoryDefinition)
+	cveNames := ParseCveNames(advisoryDefinition)
+	for _, cveName := range cveNames {
+		vulnID := database.VulnerabilityID{Name: cveName + " - " + rhsaName, Namespace: ParseVulnerabilityNamespace(advisoryDefinition)}
+		vulnIDs = append(vulnIDs, vulnID)
+	}
+	return vulnIDs
+}
+
+// parse the CVE name(s) (e.g.: "CVE-2019-11249") from the given advisory definition
+func ParseCveNames(advisoryDefinition ParsedAdvisory) []string {
+	var cveNames []string
+	for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
+		cveNames = append(cveNames, cve.Value)
+	}
+	return cveNames
+}
+
+// parse the RHSA name (e.g.: "RHBA-2019:2794") from the given advisory definition
+func ParseRhsaName(advisoryDefinition ParsedAdvisory) string {
+	return strings.TrimSpace(advisoryDefinition.Metadata.Title[:strings.Index(advisoryDefinition.Metadata.Title, ": ")])
+}
+
+// parse the namespace from the given advisory definition
+func ParseVulnerabilityNamespace(advisoryDefinition ParsedAdvisory) string {
+	// TODO: disabled; rewire with criteria parse result
+	return ""
+}
+
+func GetSeverity(sev string) database.Severity {
+	switch strings.Title(sev) {
+	case "Low":
+		return database.LowSeverity
+	case "Moderate":
+		return database.MediumSeverity
+	case "Important":
+		return database.HighSeverity
+	case "Critical":
+		return database.CriticalSeverity
+	default:
+		log.Warningf("could not determine vulnerability severity from: %s.", sev)
+		return database.UnknownSeverity
+	}
 }
 
 func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
@@ -365,16 +477,29 @@ func IsArchSupported(arch string) bool {
 }
 
 // parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
-func ParseParseCpeNameFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]CpeName, error) {
-	cpeNames := []CpeName{}
+func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
+	var cpeNames []string
 	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
 		return cpeNames, errors.New("unparseable affected cpe list")
 	}
 	// parse and return any entries after the first cpe entry from the list
 	for i := 1; i < len(affectedCpeList.Cpe); i++ {
-		cpeNames = append(cpeNames, ParseCpeName(affectedCpeList.Cpe[i]))
+		cpeNames = append(cpeNames, affectedCpeList.Cpe[i])
 	}
 	return cpeNames, nil
+}
+
+// parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
+func ParseCpeStructFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]CpeName, error) {
+	cpeStructs := []CpeName{}
+	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
+		return cpeStructs, errors.New("unparseable affected cpe list")
+	}
+	// parse and return any entries after the first cpe entry from the list
+	for i := 1; i < len(affectedCpeList.Cpe); i++ {
+		cpeStructs = append(cpeStructs, ParseCpeName(affectedCpeList.Cpe[i]))
+	}
+	return cpeStructs, nil
 }
 
 // parse cpe string
@@ -397,44 +522,74 @@ func ParseCpeName(cpeNameString string) CpeName {
 	}
 }
 
-// get advisories from the given oval xml which were issued since the last update (based on db value)
-func GetAdvisoriesSinceLastDbUpdate(ovalDoc string, datastore database.Datastore) ([]OvalV2AdvisoryDefinition, error) {
-	if (ovalDoc == "") {
-		return nil, errors.New("Cannot parse empty source oval doc")
-	}
-	//
-	ovalDefinitions := OvalV2Definitions{}
-	err := xml.Unmarshal([]byte(ovalDoc), &ovalDefinitions)
-	if err != nil {
-		panic(err)
-	}
+// get advisories from the given oval document which were issued since the last update (based on db value)
+func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
 	sinceDate := DbLookupLastAdvisoryDate(datastore)
-	var advisories []OvalV2AdvisoryDefinition
-	for _, definition := range ovalDefinitions.DefinitionSet.Definitions {
+	var advisories []ParsedAdvisory
+	for _, definition := range ovalDoc.DefinitionSet.Definitions {
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
-			advisories = append(advisories, definition)
+			advisories = append(advisories, ParseAdvisory(definition, ovalDoc))
 		} else if IsAdvisorySameDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
+			parsedAdvisory := ParseAdvisory(definition, ovalDoc)
 			// advisory date is coarse (YYYY-MM-dd format) date only,
 			// so it's possible that we'll see an advisory multiple times within the same day;
 			// check the db in this case to be sure
-			if (!DbLookupIsAdvisoryProcessed(definition.Id, definition.Version, datastore)) {
+			if (!DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore)) {
 				// this advisory id/version hasn't been processed yet; add it
-				advisories = append(advisories, definition)
-				// update the db ky/value entry for this advisory
-				DbStoreAdvisoryProcessed(definition.Id, definition.Version, datastore)
+				advisories = append(advisories, parsedAdvisory)
 			}
 		}
 	}
 	// debug-only info
-	out, _ := xml.MarshalIndent(ovalDefinitions, " ", "  ")
+	out, _ := xml.MarshalIndent(ovalDoc, " ", "  ")
 	log.Debug(string(out))
 
 	// update the db ky/value entry for the last advisory processed date (now, as coarse YYYY-MM-dd format)
 	DbStoreLastAdvisoryDate(time.Now().Format(AdvisoryDateFormat), datastore)
 	
 	return advisories, nil
+}
+
+func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) (ParsedAdvisory) {
+	parsedAdvisory := ParsedAdvisory{
+		Id: definition.Id, 
+		Version: definition.Version, 
+		Metadata: definition.Metadata,
+		Criteria: definition.Criteria,
+		PackageList: GetPackageList(definition.Criteria, ovalDoc),
+	}
+	return parsedAdvisory
+}
+
+func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvras []ParsedRmpNvra) {
+	criterions := extractAllCriterions(criteria)
+	for _, criterion := range criterions {
+		// get package info
+		parsedNvras = append(parsedNvras, FindPackageNvraInfo(criterion.TestRef, ovalDoc))
+	}
+	return
+}
+
+func FindPackageNvraInfo(testRefId string, ovalDoc OvalV2Document) ParsedRmpNvra {
+	var parsedNvra ParsedRmpNvra
+    for _, test := range ovalDoc.TestSet.Tests {
+		if test.Id == testRefId {
+			for _, obj := range ovalDoc.ObjectSet.Objects {
+				if obj.Id == test.ObjectRef.Ref {
+					parsedNvra.Name = obj.Name
+				}
+			}
+			for _, state := range ovalDoc.StateSet.States {
+				if (state.Id == test.StateRef.Ref) {
+					parsedNvra.Evr = state.Evr.Value
+					parsedNvra.Arch = state.Arch.Value
+				}
+			}
+		}
+	}
+	return parsedNvra
 }
 
 // determine whether the given advisory date string is since the last update
@@ -487,25 +642,19 @@ func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datasto
 }
 
 // check the db key/value table for the given advisory's id, compare the stored 'version' value to current
-func DbLookupIsAdvisoryProcessed(id string, currentVersion string, datastore database.Datastore) bool {
-	foundAdvisoryVersion, ok, err := database.FindKeyValueAndRollback(datastore, id)
+func DbLookupIsAdvisoryProcessed(definition ParsedAdvisory, datastore database.Datastore) bool {
+	// check the db to see if the associated vulnerability name is already stored
+	vulnIds := ConstructVulnerabilityIDs(definition)
+	foundVulns, err := database.FindVulnerabilitiesAndRollback(datastore, vulnIds)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if ok == false {
-		// no record found, so assume it hasn't been processed
+	if len(foundVulns) > 0 {
+		// found a record, so this has already been processed
+		return true
+	} else {
+		// no record found, so it hasn't been processed yet
 		return false
-	}
-	// compare the found version to the current version
-	return currentVersion == foundAdvisoryVersion
-}
-
-// update the db key/value table with the given last advisory date
-func DbStoreAdvisoryProcessed(id string, currentVersion string, datastore database.Datastore) {
-	err := database.UpdateKeyValueAndCommit(datastore,
-		id, currentVersion)
-	if err != nil {
-		log.Fatal(err)
 	}
 }
 
@@ -623,3 +772,43 @@ func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 	}
 	return stringbuilder.String(), err
 }
+
+// parent call to parse entire doc
+func ParseDefinitionNamespaces(ovalXml string) []OvalV2DefinitionNamespaces {
+	ovalV2DefinitionNamespaces := []OvalV2DefinitionNamespaces{}
+	ovalDoc := OvalV2Document{}
+	err := xml.Unmarshal([]byte(ovalXml), &ovalDoc)
+	if err != nil {
+		panic(err)
+	}
+	// for _, definition := range ovalDoc.Definitions {
+	for _, definition := range ovalDoc.DefinitionSet.Definitions {
+		criteriaNs := ParseCriteriaForModuleNamespaces(definition.Criteria)
+		cpeNames, err := ParseCpeStructFromAffectedCpeList(definition.Metadata.Advisory.AffectedCpeList)
+		if err != nil {
+			// log error and continue
+			log.Error(err)
+		}
+		ovalV2DefinitionNamespace := OvalV2DefinitionNamespaces{criteriaNs, cpeNames}
+		ovalV2DefinitionNamespaces = append(ovalV2DefinitionNamespaces, ovalV2DefinitionNamespace)
+	}
+	return ovalV2DefinitionNamespaces
+}
+
+// parse one definition
+func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) ([]string) {
+    var moduleNamespaces []string
+	criterions := extractAllCriterions(criteria)
+	// walk the criteria and add them
+	for _, criterion := range criterions {
+		// Module idm:DL1 is enabled
+		var regexComment = regexp.MustCompile(`(Module )(.*)( is enabled)`)
+		matches := regexComment.FindStringSubmatch(criterion.Comment)
+		if matches != nil && len(matches) > 2 && matches[2] != "" {
+			moduleNamespaces = append(moduleNamespaces, matches[2])
+		}
+		// moduleNamespaces = append(moduleNamespaces, criterion.Comment)
+	}
+    return moduleNamespaces
+}
+
