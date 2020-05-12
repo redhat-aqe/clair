@@ -618,6 +618,9 @@ func FindPackageNvraInfo(testRefId string, ovalDoc OvalV2Document) ParsedRmpNvra
 
 // determine whether the given advisory date string is since the last update
 func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
+	if sinceDate == "" {
+		sinceDate = DefaultLastAdvisoryDate
+	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
         log.Fatal("error parsing date string: " + sinceDate)
@@ -631,6 +634,9 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 
 // determine whether the given advisory date string is the same as the last update
 func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
+	if sinceDate == "" {
+		sinceDate = DefaultLastAdvisoryDate
+	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
         log.Fatal("error parsing date string: " + sinceDate)
@@ -648,7 +654,7 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if ok == false {
+	if (ok == false || dbLastAdvisoryDate == "") {
 		// no record found, use default
 		return DefaultLastAdvisoryDate
 	}
