@@ -173,6 +173,7 @@ func TestDbLookupLastAdvisoryDate(t *testing.T) {
 		{"1", args{newmockDatastore(), TestLastAdvisoryDate}, TestLastAdvisoryDate},
 		{"2", args{newmockDatastore(), "2019-07-01"}, "2019-07-01"},
 		{"3", args{newmockDatastore(), "2019-11-04"}, "2019-11-04"},
+		{"4", args{newmockDatastore(), ""}, "1970-01-01"},
 	}
 	for _, tt := range tests {
 		SetLastAdvisoryDate(tt.args.sinceDate)
