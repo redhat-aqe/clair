@@ -214,6 +214,12 @@ type ParsedRmpNvra struct {
 	Arch     string
 }
 
+func init() {
+	vulnsrc.RegisterUpdater("ovalv2", &updater{})
+}
+
+func (u *updater) Clean() {}
+
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
@@ -422,8 +428,26 @@ func ParseRhsaName(advisoryDefinition ParsedAdvisory) string {
 
 // parse the namespace from the given advisory definition
 func ParseVulnerabilityNamespace(advisoryDefinition ParsedAdvisory) string {
-	// TODO: disabled; rewire with criteria parse result
-	return ""
+	// use criteria parse result
+	moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
+	if len(moduleNamespaces) > 0 {
+		// use MODULE namespace
+		return moduleNamespaces[0]
+	} else {
+		// use CPE namespace
+		cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
+		if err != nil {
+			// log error and continue
+			log.Error(err)
+			return ""
+		}
+		if len(cpeNames) == 0 {
+			// no namespace found
+			return ""
+		} else {
+			return cpeNames[0]
+		}
+	}
 }
 
 func GetSeverity(sev string) database.Severity {
