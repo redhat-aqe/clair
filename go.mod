@@ -2,6 +2,12 @@ module github.com/quay/clair/v4
 
 go 1.13
 
+replace (
+	github.com/containerd/containerd => github.com/containerd/containerd v1.3.1-0.20200227195959-4d242818bf55
+	github.com/docker/docker => github.com/docker/docker v1.4.2-0.20200227233006-38f52c9fec82
+	github.com/quay/claircore => github.com/allda/claircore v0.0.0-20200518090351-6d17d07dbc17
+)
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/google/go-cmp v0.4.0
