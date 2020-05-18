@@ -31,6 +31,8 @@ import (
 
 	"github.com/quay/clair/v3/database"
 	"github.com/quay/clair/v3/ext/versionfmt/modulerpm"
+	"github.com/quay/clair/v3/ext/versionfmt/rpm"
+	"github.com/quay/clair/v3/pkg/commonerr"
 	"github.com/quay/clair/v3/pkg/httputil"
 	"github.com/quay/clair/v3/ext/vulnsrc"
 	log "github.com/sirupsen/logrus"
@@ -50,169 +52,6 @@ const (
 )
 
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
-
-type updater struct{}
-
-type ManifestEntry struct {
-	// comma-delimited manifest entry line from PULP_MANIFEST
-	// format:
-	//  [rhel version]/[platform bz2 file],[file sha256sum],[file bytes]
-	// e.g.:
-	//  RHEL8/ansible-2.8.oval.xml.bz2,14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed,3755
-	BzipPath  string // RHEL8/ansible-2.8.oval.xml.bz2
-	Signature string // 14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed
-	Size      int    // 3755
-}
-
-type OvalV2Document struct {
-	XMLName          xml.Name                      `xml:"oval_definitions"`
-	DefinitionSet    OvalV2AdvisoryDefinitions     `xml:"definitions"`
-	TestSet			 OvalV2Tests                   `xml:"tests"`
-	ObjectSet	     OvalV2Objects                 `xml:"objects"`
-	StateSet         OvalV2States                  `xml:"states"`
-}
-
-type OvalV2AdvisoryDefinitions struct {
-	Definitions      []OvalV2AdvisoryDefinition    `xml:"definition"`
-}
-
-type OvalV2AdvisoryDefinition struct {
-	Id               string            `xml:"id,attr"`
-	Version          string            `xml:"version,attr`
-	Metadata         OvalV2Metadata    `xml:"metadata"`
-	Criteria         OvalV2Criteria    `xml:"criteria"`
-}
-
-type OvalV2Metadata struct {
-	Title            string            `xml:"title"`
-	Description      string            `xml:"description"`
-	Advisory         OvalV2Advisory    `xml:"advisory"`
-}
-
-type OvalV2Advisory struct {
-    Issued           OvalV2AdvisoryIssued     `xml:"issued"`
-	Updated          OvalV2AdvisoryUpdated    `xml:"updated"`
-	Severity         string                   `xml:"severity"`
-	CveList          []OvalV2CveData          `xml:"cve"`
-	AffectedCpeList  OvalV2Cpe                `xml:"affected_cpe_list"`
-}
-
-type OvalV2AdvisoryIssued struct {
-    Date     string    `xml:"date,attr"`
-}
-
-type OvalV2AdvisoryUpdated struct {
-    Date     string    `xml:"date,attr"`
-}
-
-type OvalV2CveData struct {
-	XMLName  xml.Name  `xml:"cve"`
-    Cvss3    string    `xml:"cvss3,attr"`
-    Cwe      string    `xml:"cwe,attr"`
-	Href     string    `xml:"href,attr"`
-	Public   string    `xml:"public,attr"`
-	Value    string    `xml:",chardata"`
-}
-
-type OvalV2Cpe struct {
-	Cpe      []string   `xml:"cpe"`
-}
-
-type CpeName struct {
-	Part       string
-	Vendor     string
-	Product    string
-	Version    string
-	Update     string
-	Edition    string
-	Language   string
-}
-
-type OvalV2Criteria struct {
-	Criterion   []OvalV2Criterion     `xml:"criterion"`
-	Criteria    []OvalV2Criteria      `xml:"criteria"`
-}
-
-type OvalV2Criterion struct {
-	XMLName     xml.Name              `xml:"criterion"`
-	Comment     string                `xml:"comment,attr"`
-	TestRef     string                `xml:"test_ref,attr"`
-}
-
-type OvalV2Tests struct {
-	XMLName     xml.Name              `xml:"tests"`
-	Tests       []OvalV2RpmInfoTest   `xml:"rpminfo_test"`
-}
-
-type OvalV2RpmInfoTest struct {
-	Comment     string                `xml:"comment,attr"`
-	Id          string                `xml:"id,attr"`
-	ObjectRef   RpmInfoTestObjectRef  `xml:"object"`
-	StateRef    RpmInfoTestStateRef   `xml:"state"`
-}
-
-type RpmInfoTestObjectRef struct {
-	Ref   string                `xml:"object_ref,attr"`
-}
-
-type RpmInfoTestStateRef struct {
-	Ref    string                `xml:"state_ref,attr"`
-}
-
-type OvalV2Objects struct {
-	XMLName     xml.Name              `xml:"objects"`
-	Objects     []OvalV2RpmInfoObject `xml:"rpminfo_object"`
-}
-
-type OvalV2RpmInfoObject struct {
-	Id          string                `xml:"id,attr"`
-	Version     string                `xml:"version,attr"`
-	Name        string                `xml:"name"`
-}
-
-type OvalV2States struct {
-	XMLName     xml.Name              `xml:"states"`
-	States      []OvalV2RpmInfoState  `xml:"rpminfo_state"`
-}
-
-type OvalV2RpmInfoState struct {
-	Id          string                `xml:"id,attr"`
-	Version     string                `xml:"version,attr"`
-	Arch        RpmInfoStateChild     `xml:"arch"`
-	Evr         RpmInfoStateChild     `xml:"evr"`
-}
-
-type RpmInfoStateChild struct {
-	DataType    string                `xml:"datatype,attr"`
-	Operation   string                `xml:"operation,attr"`
-	Value       string                `xml:",chardata"`
-}
-
-type OvalV2DefinitionNamespaces struct {
-	ModuleNamespaces  []string
-	CpeNamespaces     []CpeName
-}
-
-type RpmNvra struct {
-	Name     string
-	Version  string
-	Release  string
-	Arch     string
-}
-
-type ParsedAdvisory struct {
-	Id               string
-	Version          string
-	Metadata         OvalV2Metadata
-	Criteria         OvalV2Criteria
-	PackageList      []ParsedRmpNvra
-}
-
-type ParsedRmpNvra struct {
-	Name     string
-	Evr      string
-	Arch     string
-}
 
 func init() {
 	vulnsrc.RegisterUpdater("ovalv2", &updater{})
@@ -276,6 +115,9 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 			resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities(unprocessedAdvisories, ovalDoc)...)
 
+			// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
+			DbUpdateManifestEntrySignature(manifestEntry, datastore)
+
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
 			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
@@ -307,8 +149,6 @@ func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Docu
 	} else {
 		// append found advisories to the to-be-processed list
 		unprocessedAdvisories = append(unprocessedAdvisories, foundAdvisories...)
-		// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
-		DbUpdateManifestEntrySignature(manifestEntry, datastore)
 	}
 
 	return unprocessedAdvisories, nil
@@ -375,7 +215,7 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 				for _, cpe := range cpeNames {
 					feature.Namespace = database.Namespace{
 						Name:          cpe,
-						VersionFormat: modulerpm.ParserName,
+						VersionFormat: rpm.ParserName,
 					}
 					vulnerability.Affected = append(vulnerability.Affected, feature)
 				}
@@ -514,14 +354,14 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 }
 
 // parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
-func ParseCpeStructFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]CpeName, error) {
-	cpeStructs := []CpeName{}
+func ParseCpeStructFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
+	var cpeStructs []string
 	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
 		return cpeStructs, errors.New("unparseable affected cpe list")
 	}
 	// parse and return any entries after the first cpe entry from the list
 	for i := 1; i < len(affectedCpeList.Cpe); i++ {
-		cpeStructs = append(cpeStructs, ParseCpeName(affectedCpeList.Cpe[i]))
+		cpeStructs = append(cpeStructs, affectedCpeList.Cpe[i])
 	}
 	return cpeStructs, nil
 }
@@ -623,11 +463,15 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
-        log.Fatal("error parsing date string: " + sinceDate)
+		log.Error("error parsing date string: " + sinceDate)
+		// if unable to parse date, treat as new advisory
+		return true
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
     if err != nil {
-        log.Fatal("error parsing date string: " + advisoryDate)
+        log.Error("error parsing date string: " + advisoryDate)
+		// if unable to parse date, treat as new advisory
+		return true
 	}
 	return advisoryTime.After(sinceTime)
 }
@@ -639,11 +483,15 @@ func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
-        log.Fatal("error parsing date string: " + sinceDate)
+        log.Error("error parsing date string: " + sinceDate)
+		// if unable to parse date, treat as not same
+		return false
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
     if err != nil {
-        log.Fatal("error parsing date string: " + advisoryDate)
+        log.Error("error parsing date string: " + advisoryDate)
+		// if unable to parse date, treat as not same
+		return false
 	}
 	return advisoryTime.Equal(sinceTime)
 }
@@ -652,7 +500,9 @@ func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	dbLastAdvisoryDate, ok, err := database.FindKeyValueAndRollback(datastore, DbLastAdvisoryDateKey)
 	if err != nil {
-		log.Fatal(err)
+		log.Error("Unable to lookup last advisory date, caused by: " + err.Error())
+		// error while fetching record, use default
+		return DefaultLastAdvisoryDate
 	}
 	if (ok == false || dbLastAdvisoryDate == "") {
 		// no record found, use default
@@ -667,7 +517,8 @@ func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datasto
 	err := database.UpdateKeyValueAndCommit(datastore,
 		DbLastAdvisoryDateKey, lastAdvisoryDate)
 	if err != nil {
-		log.Fatal(err)
+		// log the error and continue
+		log.Error("Unable to store last advisory date, caused by: " + err.Error())
 	}
 }
 
@@ -677,7 +528,9 @@ func DbLookupIsAdvisoryProcessed(definition ParsedAdvisory, datastore database.D
 	vulnIds := ConstructVulnerabilityIDs(definition)
 	foundVulns, err := database.FindVulnerabilitiesAndRollback(datastore, vulnIds)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
+		// error during db lookup, treat advisory as unprocessed
+		return false
 	}
 	if len(foundVulns) > 0 {
 		// found a record, so this has already been processed
@@ -694,7 +547,8 @@ func DbUpdateManifestEntrySignature(manifestEntry ManifestEntry, datastore datab
 	err := database.UpdateKeyValueAndCommit(datastore,
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath, manifestEntry.Signature)
 	if err != nil {
-		log.Fatal(err)
+		// log error and continue
+		log.Error(err)
 	}
 }
 
@@ -704,7 +558,9 @@ func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database
 	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore,
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath)
 	if err != nil {
-		log.Fatal(err)
+		// log the error and err on the side of treat-as-new/updated
+		log.Error("Unable to store last advisory date, caused by: " + err.Error())
+		return true
 	}
 	if ok == false {
 		// no record found, so consider this entry as updated (since it hasn't been previously processed)
@@ -718,13 +574,18 @@ func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database
 func FetchPulpManifest(pulpManifestUrl string) (string, error) {
 	resp, err := httputil.GetWithUserAgent(pulpManifestUrl)
 	if err != nil {
-		log.Fatal(err)
+		log.Error("Unable to fetch pulp manifest, caused by: " + err.Error())
+		return "", err
 	}
 	defer resp.Body.Close()
-
+	if !httputil.Status2xx(resp) {
+		log.WithField("StatusCode", resp.StatusCode).Error("Unable to fetch pulp manifest")
+		return "", commonerr.ErrCouldNotDownload
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		log.Error("Unable to read fetched pulp manifest, caused by: " + err.Error())
+		return "", err
 	}
 	return string(body), err
 }
@@ -764,7 +625,9 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 	entry.Signature = data[1]
 	size, err := strconv.Atoi(data[2])
 	if err != nil {
-		log.Fatal(err)
+		log.Error("Unable to parse pulp manifest line, caused by: " + err.Error())
+		entry.Size = 0
+		return entry, err
 	}
 	entry.Size = size
 	return entry, err
@@ -772,13 +635,16 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 
 // decompress and read a bzip2-compressed oval file, return the xml content as string
 func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
-	var stringbuilder strings.Builder
 	resp, err := httputil.GetWithUserAgent(bzipOvalFile)
 	if err != nil {
 		log.Error(err)
 		return "", err
 	}
 	defer resp.Body.Close()
+	if !httputil.Status2xx(resp) {
+		log.WithField("StatusCode", resp.StatusCode).Error("Unable to fetch bzip-compressed oval file")
+		return "", commonerr.ErrCouldNotDownload
+	}
 	// read the response body
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -791,38 +657,13 @@ func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 		log.Error(err)
 		return "", err
 	}
-	// only proceed with read if no errors so far
-	if err == nil {
-		content, readErr := ioutil.ReadAll(bzipreader)
-		if readErr != nil {
-			log.Error(readErr)
-			return "", err
-		}
-		stringbuilder.WriteString(string(content))
+	// proceed with read
+	content, readErr := ioutil.ReadAll(bzipreader)
+	if readErr != nil {
+		log.Error(readErr)
+		return "", err
 	}
-	return stringbuilder.String(), err
-}
-
-// parent call to parse entire doc
-func ParseDefinitionNamespaces(ovalXml string) []OvalV2DefinitionNamespaces {
-	ovalV2DefinitionNamespaces := []OvalV2DefinitionNamespaces{}
-	ovalDoc := OvalV2Document{}
-	err := xml.Unmarshal([]byte(ovalXml), &ovalDoc)
-	if err != nil {
-		panic(err)
-	}
-	// for _, definition := range ovalDoc.Definitions {
-	for _, definition := range ovalDoc.DefinitionSet.Definitions {
-		criteriaNs := ParseCriteriaForModuleNamespaces(definition.Criteria)
-		cpeNames, err := ParseCpeStructFromAffectedCpeList(definition.Metadata.Advisory.AffectedCpeList)
-		if err != nil {
-			// log error and continue
-			log.Error(err)
-		}
-		ovalV2DefinitionNamespace := OvalV2DefinitionNamespaces{criteriaNs, cpeNames}
-		ovalV2DefinitionNamespaces = append(ovalV2DefinitionNamespaces, ovalV2DefinitionNamespace)
-	}
-	return ovalV2DefinitionNamespaces
+	return string(content), nil
 }
 
 // parse one definition

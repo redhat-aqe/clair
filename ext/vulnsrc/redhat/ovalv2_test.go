@@ -380,51 +380,6 @@ func TestParseNVRA(t *testing.T) {
 	}
 }
 
-func TestParseDefinitionNamespaces(t *testing.T) {
-	pwd, _ := os.Getwd()
-	xmlFilePath := pwd + "/testdata/v2/rhel-8.oval_abbreviated.xml"
-	xmlContent, err := ioutil.ReadFile(xmlFilePath)
-	if err != nil {
-		log.Fatal("error reading " + xmlFilePath)
-	} else {
-		log.Debug("found " + xmlFilePath + ": " + string(xmlContent))
-	}
-	type args struct {
-		ovalDefinitionsXml string
-	}
-	tests := []struct {
-		name string
-		args args
-		want []OvalV2DefinitionNamespaces
-	}{
-		{
-			"1",
-			args{string(xmlContent)},
-			[]OvalV2DefinitionNamespaces{
-				{
-					[]string{"idm:DL1"},
-					[]CpeName{
-						{Part: "a", Vendor: "redhat", Product: "enterprise_linux", Version: "8", Update: "", Edition: "appstream", Language: ""},
-					},
-				},
-				{
-					[]string{"nodejs:12"},
-					[]CpeName{
-						{Part: "a", Vendor: "redhat", Product: "enterprise_linux", Version: "8", Update: "", Edition: "appstream", Language: ""},
-					},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseDefinitionNamespaces(tt.args.ovalDefinitionsXml); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseDefinitionNamespaces() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 type mockDatastore struct {
 	database.MockDatastore
 
