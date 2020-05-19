@@ -396,7 +396,7 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 	sinceDate := DbLookupLastAdvisoryDate(datastore)
 	var advisories []ParsedAdvisory
 	for _, definition := range ovalDoc.DefinitionSet.Definitions {
-		// check if this entry has already been processed (based on its sha256 hash)
+		// check if this entry has already been processed (based on its issued date)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
 			advisories = append(advisories, ParseAdvisory(definition, ovalDoc))
@@ -468,13 +468,13 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
-		log.Error("error parsing date string: " + sinceDate)
+		log.Error("error parsing since date string: " + sinceDate)
 		// if unable to parse date, treat as new advisory
 		return true
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
     if err != nil {
-        log.Error("error parsing date string: " + advisoryDate)
+        log.Error("error parsing advisory date string: " + advisoryDate)
 		// if unable to parse date, treat as new advisory
 		return true
 	}
@@ -488,13 +488,13 @@ func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
     if err != nil {
-        log.Error("error parsing date string: " + sinceDate)
+        log.Error("error parsing since date string: " + sinceDate)
 		// if unable to parse date, treat as not same
 		return false
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
     if err != nil {
-        log.Error("error parsing date string: " + advisoryDate)
+        log.Error("error parsing advisory date string: " + advisoryDate)
 		// if unable to parse date, treat as not same
 		return false
 	}
