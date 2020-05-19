@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// ovalv2.go provides fetch/parsing/etc specific to version-2 oval
-// (keeping separate for potential reuse)
+// redhat.go provides fetch/parsing/etc specific to version-2 oval
 package redhat
 
 import (
@@ -54,7 +53,7 @@ const (
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
 
 func init() {
-	vulnsrc.RegisterUpdater("ovalv2", &updater{})
+	vulnsrc.RegisterUpdater("redhat", &updater{})
 }
 
 func (u *updater) Clean() {}
