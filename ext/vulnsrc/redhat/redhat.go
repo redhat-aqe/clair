@@ -63,18 +63,22 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 	pulpManifestBody, err := FetchPulpManifest(PulpV2BaseURL + PulpManifest)
 	if err != nil {
-		log.Debug("Unable to fetch pulp manifest file: " + PulpV2BaseURL + PulpManifest)
+		log.Error("Unable to fetch pulp manifest file: " + PulpV2BaseURL + PulpManifest)
 		return resp, err
 	}
+	log.Info("Found pulp manifest: " + pulpManifestBody)
 	pulpManifestEntries := ParsePulpManifest(pulpManifestBody)
+
+	log.Info(fmt.Sprintf("Processing %d pulp manifest entries",  len(pulpManifestEntries)))
 
 	// walk the set of pulpManifestEntries
 	for _, manifestEntry := range pulpManifestEntries {
+		log.Info(fmt.Sprintf("Processing manifest entry (BzipPath: %s)",  manifestEntry.BzipPath))
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
 			unprocessedAdvisories := []ParsedAdvisory{}
 			// this is new/updated, process it now
-			log.Debug("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
+			log.Info("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
 
 			// unzip and read the bzip-compressed oval file into an xml string
 			ovalXml, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
@@ -105,12 +109,14 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			if len(unprocessedAdvisories) < 1 {
 				log.Info("Successful update, no unprocessed advisories found.")
 				continue
+			} else {
+				log.Info(fmt.Sprintf("Successful update, found %d unprocessed advisories.", len(unprocessedAdvisories)))
 			}
 
 			log.WithFields(log.Fields{
 				"items":   len(unprocessedAdvisories),
 				"updater": "RedHat",
-			}).Debug("Start processing advisories")
+			}).Info("Start processing advisories")
 
 			resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities(unprocessedAdvisories, ovalDoc)...)
 
@@ -119,7 +125,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
-			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
+			log.Info("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
 		}
 	
 	}
@@ -558,7 +564,7 @@ func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database
 		DbManifestEntryKeyPrefix + manifestEntry.BzipPath)
 	if err != nil {
 		// log the error and err on the side of treat-as-new/updated
-		log.Error("Unable to store last advisory date, caused by: " + err.Error())
+		log.Error("Unable to fetch advisory signature from db, caused by: " + err.Error())
 		return true
 	}
 	if ok == false {
