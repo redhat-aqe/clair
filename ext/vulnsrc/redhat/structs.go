@@ -47,7 +47,7 @@ type OvalV2AdvisoryDefinitions struct {
 
 type OvalV2AdvisoryDefinition struct {
 	Id               string            `xml:"id,attr"`
-	Version          string            `xml:"version,attr`
+	Version          string            `xml:"version,attr"`
 	Metadata         OvalV2Metadata    `xml:"metadata"`
 	Criteria         OvalV2Criteria    `xml:"criteria"`
 }
