@@ -99,6 +99,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				log.Error(err)
 				continue
 			}
+			log.Info(fmt.Sprintf("Processing %d definitions...", len(ovalDoc.DefinitionSet.Definitions)))
 
 			unprocessedAdvisories, err = GatherUnprocessedAdvisories(manifestEntry, ovalDoc, datastore)
 			if err != nil {
@@ -130,6 +131,11 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	
 	}
 
+	// debug
+	log.Info(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
+	// update the db ky/value entry for the advisory-last-checked-on date (current timestamp, as coarse YYYY-MM-dd format)
+	DbStoreLastAdvisoryDate(time.Now().Format(AdvisoryDateFormat), datastore)
+	
 	// update the resp flag with summary of found
 	if len(resp.Vulnerabilities) > 0 {
 		resp.FlagName = UpdaterFlag
@@ -297,6 +303,8 @@ func ParseVulnerabilityNamespace(advisoryDefinition ParsedAdvisory) string {
 
 func GetSeverity(sev string) database.Severity {
 	switch strings.Title(sev) {
+	case "None":
+		return database.NegligibleSeverity
 	case "Low":
 		return database.LowSeverity
 	case "Moderate":
@@ -399,6 +407,8 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 		// check if this entry has already been processed (based on its issued date)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
+			// debug
+			log.Info(fmt.Sprintf("Found advisory issued since the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 			advisories = append(advisories, ParseAdvisory(definition, ovalDoc))
 		} else if IsAdvisorySameDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			parsedAdvisory := ParseAdvisory(definition, ovalDoc)
@@ -407,17 +417,20 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 			// check the db in this case to be sure
 			if (!DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore)) {
 				// this advisory id/version hasn't been processed yet; add it
+				// debug
+				log.Info(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 				advisories = append(advisories, parsedAdvisory)
 			}
+		} else {
+			// this advisory was issued before the last advisory date in the database, so already processed; skip it
+			// debug
+			log.Info(fmt.Sprintf("Skipping advisory issued before the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 		}
 	}
 	// debug-only info
 	out, _ := xml.MarshalIndent(ovalDoc, " ", "  ")
 	log.Debug(string(out))
 
-	// update the db ky/value entry for the last advisory processed date (now, as coarse YYYY-MM-dd format)
-	DbStoreLastAdvisoryDate(time.Now().Format(AdvisoryDateFormat), datastore)
-	
 	return advisories, nil
 }
 
