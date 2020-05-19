@@ -17,13 +17,11 @@ package redhat
 import (
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/quay/clair/v3/database"
@@ -46,9 +44,9 @@ func SetLastAdvisoryDate(d string) {
 
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 
-	manifestEntry1 := ManifestEntry{
+	manifestEntry_1 := ManifestEntry{
 		"RHEL8/ansible-2.8.oval.xml.bz2", "14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed", 3755}
-	manifestEntry2 := ManifestEntry{
+	manifestEntry_2 := ManifestEntry{
 		"RHEL8/ansible-2.8.oval.xml.bz2", "320eeb4984a0678e4fa9a3f8421b87f2a57a2922cd4e3f582eb7cc735239ce72", 3755}
 	type args struct {
 		manifestEntry ManifestEntry
@@ -59,13 +57,36 @@ func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 		args args
 		want bool
 	}{
-		{"1", args{manifestEntry1, newmockDatastore()}, false},
-		{"2", args{manifestEntry2, newmockDatastore()}, true},
+		{"1", args{manifestEntry_1, newmockDatastore()}, false},
+		{"2", args{manifestEntry_2, newmockDatastore()}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsNewOrUpdatedManifestEntry(tt.args.manifestEntry, tt.args.datastore); got != tt.want {
 				t.Errorf("IsNewOrUpdatedManifestEntry() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRmpArchSupported(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"golang-1.6.3-2.el7.x86_64.rpm"}, true},
+		{"2", args{"golang-1.6.3-2.el7.noarch.rpm"}, true},
+		{"3", args{"golang-1.6.3-2.el7.ppcle64.rpm"}, false},
+		{"4", args{"golang-1.6.3-2.el7.rpm"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsRmpArchSupported(tt.args.arch); got != tt.want {
+				t.Errorf("IsRmpArchSupported() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -83,70 +104,12 @@ func TestIsArchSupported(t *testing.T) {
 		{"1", args{"x86_64"}, true},
 		{"2", args{"noarch"}, true},
 		{"3", args{"ppcle64"}, false},
-		{"4", args{"x86_64|ppcle64"}, true},
-		{"5", args{"aarch64|ppc64le|s390x|x86_64"}, true},
-		{"6", args{"aarch64|x86_64|ppc64le|s390x"}, true},
-		{"7", args{"ppc64le|s390x"}, false},
-		{"8", args{""}, true},
+		{"4", args{""}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// debug
-			log.Info(fmt.Sprintf("IsArchSupported(%s)", tt.args.arch))
 			if got := IsArchSupported(tt.args.arch); got != tt.want {
-				t.Errorf("IsArchSupported(%v) = %v, want %v", tt.args.arch, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsRelevantCriterion(t *testing.T) {
-	type args struct {
-		criterion OvalV2Criterion
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"1", args{OvalV2Criterion{Comment:"softhsm-devel is earlier than 0:2.4.0-2.module+el8.1.0+4098+f286395e"}}, true},
-		{"2", args{OvalV2Criterion{Comment:"Red Hat Enterprise Linux must be installed"}}, false},
-		{"3", args{OvalV2Criterion{Comment:"Module idm:DL1 is enabled"}}, false},
-		{"4", args{OvalV2Criterion{Comment:"softhsm-devel is signed with Red Hat redhatrelease2 key"}}, false},
-		{"5", args{OvalV2Criterion{Comment:""}}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// debug
-			log.Info(fmt.Sprintf("IsRelevantCriterion(%s)", tt.args.criterion))
-			if got := IsRelevantCriterion(tt.args.criterion); got != tt.want {
-				t.Errorf("IsRelevantCriterion(%v) = %v, want %v", tt.args.criterion, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsSupportedDefinitionType(t *testing.T) {
-	type args struct {
-		arch string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"1", args{"patch"}, true},
-		{"2", args{"vulnerability"}, false},
-		{"3", args{"miscellaneous"}, false},
-		{"4", args{"other"}, false},
-		{"5", args{""}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// debug
-			log.Info(fmt.Sprintf("IsSupportedDefinitionType(%s)", tt.args.arch))
-			if got := IsSupportedDefinitionType(tt.args.arch); got != tt.want {
-				t.Errorf("IsSupportedDefinitionType(%v) = %v, want %v", tt.args.arch, got, tt.want)
+				t.Errorf("IsArchSupported() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -237,7 +200,7 @@ func TestFetchPulpManifest(t *testing.T) {
 	}))
 	defer srv.Close()
 	type args struct {
-		pulpManifestURL string
+		pulpManifestUrl string
 	}
 	tests := []struct {
 		name    string
@@ -249,7 +212,7 @@ func TestFetchPulpManifest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := FetchPulpManifest(tt.args.pulpManifestURL)
+			got, err := FetchPulpManifest(tt.args.pulpManifestUrl)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FetchPulpManifest() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -275,17 +238,17 @@ func TestReadBzipOvalFile(t *testing.T) {
 		log.Debug("found " + xmlFilePath + ": " + string(xmlContent))
 	}
 	// httptest provides the bzip file download endpoint
-	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv_1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(string(bzipContent)))
 	}))
-	defer srv1.Close()
+	defer srv_1.Close()
 	// httptest provides the non-bzip file download endpoint
-	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv_2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(string("ABCD1234")))
 	}))
-	defer srv2.Close()
+	defer srv_2.Close()
 	type args struct {
 		bzipOvalFile string
 	}
@@ -295,8 +258,8 @@ func TestReadBzipOvalFile(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"given valid bzip2 file, expect success", args{string(srv1.URL)}, string(xmlContent), false},
-		{"given non-bzip2 file, expect error", args{string(srv2.URL)}, "", false},
+		{"given valid bzip2 file, expect success", args{string(srv_1.URL)}, string(xmlContent), false},
+		{"given non-bzip2 file, expect error", args{string(srv_2.URL)}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,10 +304,9 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 			"1",
 			args{ovalDoc.DefinitionSet.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]string{
-				"cpe:/a:redhat:ansible_engine:2.8",
 				"cpe:/a:redhat:ansible_engine:2.8::el8",
-				// []CpeName{
-				// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
+			// []CpeName{
+			// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
 			},
 			false,
 		},
@@ -363,91 +325,56 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 	}
 }
 
-func TestIsSignificantSeverity(t *testing.T) {
+func TestParseCpeName(t *testing.T) {
 	type args struct {
-		severity string
+		cpeNameString string
 	}
 	tests := []struct {
 		name string
 		args args
-		want bool
+		want CpeName
 	}{
-		{"None", args{"None"},false},
-		{"Low", args{"Low"},true},
-		{"Moderate", args{"Moderate"},true},
-		{"Important", args{"Important"},true},
-		{"Critical", args{"Critical"},true},
-		{"Unknown", args{"Unknown"},true},
+		{"1", args{"cpe:/a:redhat:ansible_engine:2.9::el7"},
+			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "el7", Language: ""}},
+		{"2", args{"cpe:/a:redhat:ansible_engine:2.9"},
+			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "", Language: ""}},
+		{"3", args{"cpe:/"},
+			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
+		{"4", args{""},
+			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
+		{"5", args{"cpe:/a:mozilla:firefox:2.0.0.6::osx:zh-tw"},
+			CpeName{Part: "a", Vendor: "mozilla", Product: "firefox", Version: "2.0.0.6", Update: "", Edition: "osx", Language: "zh-tw"}},
 	}
-	for _, tt := range tests {	
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsSignificantSeverity(tt.args.severity); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(tt.args.severity), 
-					got, 
-					tt.want)
-			}
-			// test as all uppercase
-			if got := IsSignificantSeverity(strings.ToUpper(tt.args.severity)); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					strings.ToUpper(tt.args.severity), 
-					strings.Title(strings.ToUpper(tt.args.severity)), 
-					got, 
-					tt.want)
-			}
-			// test as all lowercase
-			if got := IsSignificantSeverity(strings.ToLower(tt.args.severity)); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					strings.ToLower(tt.args.severity), 
-					strings.Title(strings.ToLower(tt.args.severity)), 
-					got, 
-					tt.want)
+			if got := ParseCpeName(tt.args.cpeNameString); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseCpeName() = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestGetSeverity(t *testing.T) {
+func TestParseNVRA(t *testing.T) {
+	// golang-1.6.3-2.el7.x86_64.rpm
+	// Name        : golang
+	// Version     : 1.6.3
+	// Release     : 2.el7
+	// Architecture: x86_64
 	type args struct {
-		severity string
+		rpmName string
 	}
 	tests := []struct {
 		name string
 		args args
-		want database.Severity
+		want RpmNvra
 	}{
-		{"None", args{"None"},database.NegligibleSeverity},
-		{"Low", args{"Low"},database.LowSeverity},
-		{"Moderate", args{"Moderate"},database.MediumSeverity},
-		{"Important", args{"Important"},database.HighSeverity},
-		{"Critical", args{"Critical"},database.CriticalSeverity},
-		{"Unknown", args{"Unknown"},database.UnknownSeverity},
+		{"golang-1.6.3-2.el7.x86_64.rpm", args{"golang-1.6.3-2.el7.x86_64.rpm"},
+			RpmNvra{"golang", "1.6.3", "2.el7", "x86_64"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(tt.args.severity), 
-					got, 
-					tt.want)
-			}
-			// test as all uppercase
-			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(strings.ToUpper(tt.args.severity)), 
-					got, 
-					tt.want)
-			}
-			// test as all lowercase
-			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(strings.ToLower(tt.args.severity)), 
-					got, 
-					tt.want)
+			if got := ParseNVRA(tt.args.rpmName); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseNVRA() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -534,4 +461,3 @@ func newmockDatastore() *mockDatastore {
 	}
 	return md
 }
-
