@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/quay/clair/v3/database"
@@ -305,8 +306,8 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 			args{ovalDoc.DefinitionSet.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]string{
 				"cpe:/a:redhat:ansible_engine:2.8::el8",
-			// []CpeName{
-			// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
+				// []CpeName{
+				// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
 			},
 			false,
 		},
@@ -375,6 +376,96 @@ func TestParseNVRA(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseNVRA(tt.args.rpmName); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseNVRA() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsSignificantSeverity(t *testing.T) {
+	type args struct {
+		severity string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"None", args{"None"},false},
+		{"Low", args{"Low"},true},
+		{"Moderate", args{"Moderate"},true},
+		{"Important", args{"Important"},true},
+		{"Critical", args{"Critical"},true},
+		{"Unknown", args{"Unknown"},true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsSignificantSeverity(tt.args.severity); got != tt.want {
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
+					tt.args.severity, 
+					strings.Title(tt.args.severity), 
+					got, 
+					tt.want)
+			}
+			// test as all uppercase
+			if got := IsSignificantSeverity(strings.ToUpper(tt.args.severity)); got != tt.want {
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
+					strings.ToUpper(tt.args.severity), 
+					strings.Title(strings.ToUpper(tt.args.severity)), 
+					got, 
+					tt.want)
+			}
+			// test as all lowercase
+			if got := IsSignificantSeverity(strings.ToLower(tt.args.severity)); got != tt.want {
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
+					strings.ToLower(tt.args.severity), 
+					strings.Title(strings.ToLower(tt.args.severity)), 
+					got, 
+					tt.want)
+			}
+		})
+	}
+}
+
+func TestGetSeverity(t *testing.T) {
+	type args struct {
+		severity string
+	}
+	tests := []struct {
+		name string
+		args args
+		want database.Severity
+	}{
+		{"None", args{"None"},database.NegligibleSeverity},
+		{"Low", args{"Low"},database.LowSeverity},
+		{"Moderate", args{"Moderate"},database.MediumSeverity},
+		{"Important", args{"Important"},database.HighSeverity},
+		{"Critical", args{"Critical"},database.CriticalSeverity},
+		{"Unknown", args{"Unknown"},database.UnknownSeverity},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
+					tt.args.severity, 
+					strings.Title(tt.args.severity), 
+					got, 
+					tt.want)
+			}
+			// test as all uppercase
+			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
+					tt.args.severity, 
+					strings.Title(strings.ToUpper(tt.args.severity)), 
+					got, 
+					tt.want)
+			}
+			// test as all lowercase
+			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
+					tt.args.severity, 
+					strings.Title(strings.ToLower(tt.args.severity)), 
+					got, 
+					tt.want)
 			}
 		})
 	}
@@ -461,3 +552,4 @@ func newmockDatastore() *mockDatastore {
 	}
 	return md
 }
+
