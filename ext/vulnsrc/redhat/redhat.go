@@ -175,67 +175,78 @@ func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2
 
 // get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
 func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
-	for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
-		packageMap := make(map[string]bool)
-		vulnerability := database.VulnerabilityWithAffected{
-			Vulnerability: database.Vulnerability{
-				Name:        cve.Value + " - " + ParseRhsaName(advisoryDefinition),
-				Link:        CveURL + cve.Value,
-				Severity:    GetSeverity(advisoryDefinition.Metadata.Advisory.Severity),
-				Description: advisoryDefinition.Metadata.Description,
-			},
-		}
-		packageList := GetPackageList(advisoryDefinition.Criteria, ovalDoc)
-		for _, parsedRmpNvra := range packageList {
-			if !IsArchSupported(parsedRmpNvra.Arch) {
-				continue
+	// first, check the advisory severity
+	if (IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity)) {
+		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
+			packageMap := make(map[string]bool)
+			vulnerability := database.VulnerabilityWithAffected{
+				Vulnerability: database.Vulnerability{
+					Name:        cve.Value + " - " + ParseRhsaName(advisoryDefinition),
+					Link:        CveURL + cve.Value,
+					Severity:    GetSeverity(advisoryDefinition.Metadata.Advisory.Severity),
+					Description: advisoryDefinition.Metadata.Description,
+				},
 			}
-			key := parsedRmpNvra.Name + parsedRmpNvra.Evr
-			ok := packageMap[key]
-			if ok {
-				// filter out duplicated features (arch specific)
-				continue
-			}
-			packageMap[key] = true
-
-			feature := database.AffectedFeature{
-				FeatureName:     parsedRmpNvra.Name,
-				AffectedVersion: parsedRmpNvra.Evr,
-				FixedInVersion:  parsedRmpNvra.Evr,
-				FeatureType:     AffectedType,
-			}
-			moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
-			if len(moduleNamespaces) > 0 {
-				// modular rpm has namespace made of module_name:stream
-				feature.Namespace = database.Namespace{
-					Name:          moduleNamespaces[0],
-					VersionFormat: modulerpm.ParserName,
-				}
-				vulnerability.Affected = append(vulnerability.Affected, feature)
-			} else {
-				// normal rpm uses CPE namespaces
-				cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
-				if err != nil {
-					// log error and continue
-					log.Error(err)
+			packageList := GetPackageList(advisoryDefinition.Criteria, ovalDoc)
+			for _, parsedRmpNvra := range packageList {
+				if !IsArchSupported(parsedRmpNvra.Arch) {
 					continue
 				}
-				if len(cpeNames) == 0 {
-					log.Warning(fmt.Sprintf("No CPE for: %s %s %s", parsedRmpNvra.Name, parsedRmpNvra.Evr, advisoryDefinition.Metadata.Title))
+				key := parsedRmpNvra.Name + parsedRmpNvra.Evr
+				ok := packageMap[key]
+				if ok {
+					// filter out duplicated features (arch specific)
+					continue
 				}
-				for _, cpe := range cpeNames {
+				packageMap[key] = true
+
+				feature := database.AffectedFeature{
+					FeatureName:     parsedRmpNvra.Name,
+					AffectedVersion: parsedRmpNvra.Evr,
+					FixedInVersion:  parsedRmpNvra.Evr,
+					FeatureType:     AffectedType,
+				}
+				moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
+				if len(moduleNamespaces) > 0 {
+					// modular rpm has namespace made of module_name:stream
 					feature.Namespace = database.Namespace{
-						Name:          cpe,
-						VersionFormat: rpm.ParserName,
+						Name:          moduleNamespaces[0],
+						VersionFormat: modulerpm.ParserName,
 					}
 					vulnerability.Affected = append(vulnerability.Affected, feature)
+				} else {
+					// normal rpm uses CPE namespaces
+					cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
+					if err != nil {
+						// log error and continue
+						log.Error(err)
+						continue
+					}
+					if len(cpeNames) == 0 {
+						log.Warning(fmt.Sprintf("No CPE for: %s %s %s", 
+							parsedRmpNvra.Name, 
+							parsedRmpNvra.Evr, 
+							advisoryDefinition.Metadata.Title))
+					}
+					for _, cpe := range cpeNames {
+						feature.Namespace = database.Namespace{
+							Name:          cpe,
+							VersionFormat: rpm.ParserName,
+						}
+						vulnerability.Affected = append(vulnerability.Affected, feature)
+					}
 				}
-			}
 
+			}
+			if len(vulnerability.Affected) > 0 {
+				vulnerabilities = append(vulnerabilities, vulnerability)
+			}
 		}
-		if len(vulnerability.Affected) > 0 {
-			vulnerabilities = append(vulnerabilities, vulnerability)
-		}
+	} else {
+		// advisories with severity "None" should be skipped
+		log.Trace(fmt.Sprintf("Skipping unsupported severity '%s' for advisory: %s", 
+			advisoryDefinition.Metadata.Advisory.Severity, 
+			advisoryDefinition.Metadata.Title))
 	}
 	return
 }
@@ -301,8 +312,8 @@ func ParseVulnerabilityNamespace(advisoryDefinition ParsedAdvisory) string {
 	}
 }
 
-func GetSeverity(sev string) database.Severity {
-	switch strings.Title(sev) {
+func GetSeverity(severity string) database.Severity {
+	switch strings.Title(strings.ToLower(severity)) {
 	case "None":
 		return database.NegligibleSeverity
 	case "Low":
@@ -314,8 +325,19 @@ func GetSeverity(sev string) database.Severity {
 	case "Critical":
 		return database.CriticalSeverity
 	default:
-		log.Warningf("could not determine vulnerability severity from: %s.", sev)
+		log.Warningf("could not determine vulnerability severity from: %s.", severity)
 		return database.UnknownSeverity
+	}
+}
+
+// checks whether the given severity is significant (used to determine whether vulns will be parsed and stored for it)
+func IsSignificantSeverity(severity string) bool {
+	switch strings.Title(strings.ToLower(severity)) {
+		case "None":
+			return false
+	default:
+		// anything else is considered significant
+		return true
 	}
 }
 
@@ -408,7 +430,9 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
 			// debug
-			log.Info(fmt.Sprintf("Found advisory issued since the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
+			log.Info(fmt.Sprintf("Found advisory issued since the last known advisory date (%s) in database: %s (%s)", 
+				sinceDate, 
+				definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 			advisories = append(advisories, ParseAdvisory(definition, ovalDoc))
 		} else if IsAdvisorySameDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			parsedAdvisory := ParseAdvisory(definition, ovalDoc)
@@ -418,13 +442,17 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 			if (!DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore)) {
 				// this advisory id/version hasn't been processed yet; add it
 				// debug
-				log.Info(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
+				log.Info(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)", 
+					sinceDate, 
+					definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 				advisories = append(advisories, parsedAdvisory)
 			}
 		} else {
 			// this advisory was issued before the last advisory date in the database, so already processed; skip it
 			// debug
-			log.Info(fmt.Sprintf("Skipping advisory issued before the last known advisory date (%s) in database: %s (%s)", sinceDate, definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
+			log.Info(fmt.Sprintf("Skipping advisory issued before the last known advisory date (%s) in database: %s (%s)", 
+				sinceDate, 
+				definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 		}
 	}
 	// debug-only info
