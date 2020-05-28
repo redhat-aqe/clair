@@ -305,6 +305,7 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 			"1",
 			args{ovalDoc.DefinitionSet.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]string{
+				"cpe:/a:redhat:ansible_engine:2.8",
 				"cpe:/a:redhat:ansible_engine:2.8::el8",
 				// []CpeName{
 				// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
@@ -397,7 +398,7 @@ func TestIsSignificantSeverity(t *testing.T) {
 		{"Critical", args{"Critical"},true},
 		{"Unknown", args{"Unknown"},true},
 	}
-	for _, tt := range tests {
+	for _, tt := range tests {	
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsSignificantSeverity(tt.args.severity); got != tt.want {
 				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
