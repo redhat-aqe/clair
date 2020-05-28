@@ -70,29 +70,6 @@ func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 	}
 }
 
-func TestIsRmpArchSupported(t *testing.T) {
-	type args struct {
-		arch string
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{"1", args{"golang-1.6.3-2.el7.x86_64.rpm"}, true},
-		{"2", args{"golang-1.6.3-2.el7.noarch.rpm"}, true},
-		{"3", args{"golang-1.6.3-2.el7.ppcle64.rpm"}, false},
-		{"4", args{"golang-1.6.3-2.el7.rpm"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsRmpArchSupported(tt.args.arch); got != tt.want {
-				t.Errorf("IsRmpArchSupported() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsArchSupported(t *testing.T) {
 	type args struct {
 		arch string
