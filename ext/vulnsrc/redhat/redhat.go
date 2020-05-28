@@ -149,20 +149,14 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 // gather any non-processed pulp manifest entry advisories
 func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
-	unprocessedAdvisories := []ParsedAdvisory{}
-
 	// get all unprocessed advisories from the oval file
 	foundAdvisories, err := ProcessAdvisoriesSinceLastDbUpdate(ovalDoc, datastore)
 	if err != nil {
 		// log error and continue
 		log.Error(err)
-		return unprocessedAdvisories, err
-	} else {
-		// append found advisories to the to-be-processed list
-		unprocessedAdvisories = append(unprocessedAdvisories, foundAdvisories...)
+		return foundAdvisories, err
 	}
-
-	return unprocessedAdvisories, nil
+	return foundAdvisories, nil
 }
 
 func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
