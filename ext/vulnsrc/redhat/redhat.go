@@ -324,6 +324,8 @@ func GetSeverity(severity string) database.Severity {
 		return database.HighSeverity
 	case "Critical":
 		return database.CriticalSeverity
+	case "Unknown":
+		return database.UnknownSeverity
 	default:
 		log.Warningf("could not determine vulnerability severity from: %s.", severity)
 		return database.UnknownSeverity
@@ -375,14 +377,14 @@ func IsArchSupported(arch string) bool {
 	return SupportedArches[arch]
 }
 
-// parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
+// parse affected_cpe_list
 func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
 	var cpeNames []string
 	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
 		return cpeNames, errors.New("unparseable affected cpe list")
 	}
-	// parse and return any entries after the first cpe entry from the list
-	for i := 1; i < len(affectedCpeList.Cpe); i++ {
+	// return all cpe entries from the list
+	for i := 0; i < len(affectedCpeList.Cpe); i++ {
 		cpeNames = append(cpeNames, affectedCpeList.Cpe[i])
 	}
 	return cpeNames, nil
