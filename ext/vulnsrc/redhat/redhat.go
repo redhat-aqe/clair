@@ -181,8 +181,7 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 					Description: advisoryDefinition.Metadata.Description,
 				},
 			}
-			packageList := GetPackageList(advisoryDefinition.Criteria, ovalDoc)
-			for _, parsedRmpNvra := range packageList {
+			for _, parsedRmpNvra := range advisoryDefinition.PackageList {
 				if !IsArchSupported(parsedRmpNvra.Arch) {
 					continue
 				}
