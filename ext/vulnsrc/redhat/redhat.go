@@ -353,21 +353,22 @@ func ParseNVRA(rpmName string) RpmNvra {
 	return rpmNvra
 }
 
-func IsArchSupported(arch string) bool {
-	// some arch values may be pattern-based, e.g.: "aarch64|ppc64le|s390x|x86_64"
-	if (strings.Contains(arch, "|")) {
-		archList := strings.Split(arch, "|")
-		for _, archItem := range archList {
-			if (SupportedArches[archItem]) {
-				// any matching element in the or-pattern means the arch is supported
-				return true
-			}
-		}
-		// nothing matched
-		return false
-	} else {
-		return SupportedArches[arch]
+func IsArchSupported(archRegex string) bool {
+	// treat empty arch package info as noarch
+	if (archRegex == "") {
+		return SupportedArches["noarch"]
 	}
+	// arch values may be simple strings (e.g.: "x86_64") or regex pattern-based (e.g.: "aarch64|ppc64le|s390x|x86_64")
+	var archMatcher = regexp.MustCompile(archRegex)
+	// walk the supported arches map, to see if there's a match to the regex
+	for archName, isSupported := range SupportedArches {
+		isMatch := archMatcher.MatchString(archName)
+		if (isMatch && isSupported) {
+			return true
+		}
+	}
+	// nothing matched
+	return false
 }
 
 // parse affected_cpe_list
