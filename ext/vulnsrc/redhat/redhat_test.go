@@ -105,7 +105,11 @@ func TestIsArchSupported(t *testing.T) {
 		{"1", args{"x86_64"}, true},
 		{"2", args{"noarch"}, true},
 		{"3", args{"ppcle64"}, false},
-		{"4", args{""}, false},
+		{"4", args{"x86_64|ppcle64"}, true},
+		{"5", args{"aarch64|ppc64le|s390x|x86_64"}, true},
+		{"6", args{"aarch64|x86_64|ppc64le|s390x"}, true},
+		{"7", args{"ppc64le|s390x"}, false},
+		{"8", args{""}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

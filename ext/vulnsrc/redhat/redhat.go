@@ -374,7 +374,20 @@ func IsRmpArchSupported(rpmName string) bool {
 }
 
 func IsArchSupported(arch string) bool {
-	return SupportedArches[arch]
+	// some arch values may be pattern-based, e.g.: "aarch64|ppc64le|s390x|x86_64"
+	if (strings.Contains(arch, "|")) {
+		archList := strings.Split(arch, "|")
+		for _, archItem := range archList {
+			if (SupportedArches[archItem]) {
+				// any matching element in the or-pattern means the arch is supported
+				return true
+			}
+		}
+		// nothing matched
+		return false
+	} else {
+		return SupportedArches[arch]
+	}
 }
 
 // parse affected_cpe_list
