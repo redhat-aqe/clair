@@ -17,6 +17,7 @@ package redhat
 import (
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -86,12 +87,14 @@ func TestIsArchSupported(t *testing.T) {
 		{"5", args{"aarch64|ppc64le|s390x|x86_64"}, true},
 		{"6", args{"aarch64|x86_64|ppc64le|s390x"}, true},
 		{"7", args{"ppc64le|s390x"}, false},
-		{"8", args{""}, false},
+		{"8", args{""}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// debug
+			log.Info(fmt.Sprintf("IsArchSupported(%s)", tt.args.arch))
 			if got := IsArchSupported(tt.args.arch); got != tt.want {
-				t.Errorf("IsArchSupported() = %v, want %v", got, tt.want)
+				t.Errorf("IsArchSupported(%v) = %v, want %v", tt.args.arch, got, tt.want)
 			}
 		})
 	}
