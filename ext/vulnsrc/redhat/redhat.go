@@ -403,26 +403,6 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 	return cpeNames, nil
 }
 
-// parse cpe string
-func ParseCpeName(cpeNameString string) CpeName {
-	// cpe:/ {part} : {vendor} : {product} : {version} : {update} : {edition} : {language}
-	// remove the "cpe:/" prelude and split the cpe name string into its components
-	components := strings.Split(strings.Replace(cpeNameString, "cpe:/", "", 1), ":")
-	// components slice must contain 7 elements; append empty string to any missing elements
-	for i := len(components); i < 7; i++ {
-		components = append(components, "")
-	}
-	return CpeName{
-		Part:      components[0],
-		Vendor:    components[1],
-		Product:   components[2],
-		Version:   components[3],
-		Update:    components[4],
-		Edition:   components[5],
-		Language:  components[6],
-	}
-}
-
 // get advisories from the given oval document which were issued since the last update (based on db value)
 func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
 	sinceDate := DbLookupLastAdvisoryDate(datastore)

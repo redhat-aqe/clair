@@ -331,35 +331,6 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 	}
 }
 
-func TestParseCpeName(t *testing.T) {
-	type args struct {
-		cpeNameString string
-	}
-	tests := []struct {
-		name string
-		args args
-		want CpeName
-	}{
-		{"1", args{"cpe:/a:redhat:ansible_engine:2.9::el7"},
-			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "el7", Language: ""}},
-		{"2", args{"cpe:/a:redhat:ansible_engine:2.9"},
-			CpeName{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.9", Update: "", Edition: "", Language: ""}},
-		{"3", args{"cpe:/"},
-			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
-		{"4", args{""},
-			CpeName{Part: "", Vendor: "", Product: "", Version: "", Update: "", Edition: "", Language: ""}},
-		{"5", args{"cpe:/a:mozilla:firefox:2.0.0.6::osx:zh-tw"},
-			CpeName{Part: "a", Vendor: "mozilla", Product: "firefox", Version: "2.0.0.6", Update: "", Edition: "osx", Language: "zh-tw"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseCpeName(tt.args.cpeNameString); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseCpeName() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseNVRA(t *testing.T) {
 	// golang-1.6.3-2.el7.x86_64.rpm
 	// Name        : golang
