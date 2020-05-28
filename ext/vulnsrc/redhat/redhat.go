@@ -403,19 +403,6 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 	return cpeNames, nil
 }
 
-// parse affected_cpe_list (first entry from CPE list should not be used because it doesn't come from Advisory configuration)
-func ParseCpeStructFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
-	var cpeStructs []string
-	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
-		return cpeStructs, errors.New("unparseable affected cpe list")
-	}
-	// parse and return any entries after the first cpe entry from the list
-	for i := 1; i < len(affectedCpeList.Cpe); i++ {
-		cpeStructs = append(cpeStructs, affectedCpeList.Cpe[i])
-	}
-	return cpeStructs, nil
-}
-
 // parse cpe string
 func ParseCpeName(cpeNameString string) CpeName {
 	// cpe:/ {part} : {vendor} : {product} : {version} : {update} : {edition} : {language}
