@@ -246,17 +246,6 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 	return
 }
 
-// construct the vulnerability name(s) from the given advisory definition
-func ConstructVulnerabilityNames(advisoryDefinition ParsedAdvisory) []string {
-	rhsaName := ParseRhsaName(advisoryDefinition)
-	var vulnNames []string
-	cveNames := ParseCveNames(advisoryDefinition)
-	for _, cveName := range cveNames {
-		vulnNames = append(vulnNames, cveName + " - " + rhsaName)
-	}
-	return vulnNames
-}
-
 // construct the []VulnerabilityID set from the given advisory definition
 func ConstructVulnerabilityIDs(advisoryDefinition ParsedAdvisory) []database.VulnerabilityID {
 	var vulnIDs []database.VulnerabilityID
