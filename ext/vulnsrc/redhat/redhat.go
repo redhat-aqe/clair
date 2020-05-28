@@ -71,6 +71,9 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 	log.Info(fmt.Sprintf("Processing %d pulp manifest entries",  len(pulpManifestEntries)))
 
+	// initialize updater flags map
+	resp.Flags = make(map[string]string)
+
 	// walk the set of pulpManifestEntries
 	for _, manifestEntry := range pulpManifestEntries {
 		log.Info(fmt.Sprintf("Processing manifest entry (BzipPath: %s)",  manifestEntry.BzipPath))
@@ -122,7 +125,8 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities(unprocessedAdvisories, ovalDoc)...)
 
 			// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
-			DbUpdateManifestEntrySignature(manifestEntry, datastore)
+			flagKey, flagVal := ConstructFlagForManifestEntrySignature(manifestEntry, datastore)
+			resp.Flags[flagKey] = flagVal
 
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
@@ -134,12 +138,11 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	// debug
 	log.Info(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
 	// update the db ky/value entry for the advisory-last-checked-on date (current timestamp, as coarse YYYY-MM-dd format)
-	DbStoreLastAdvisoryDate(time.Now().Format(AdvisoryDateFormat), datastore)
+	resp.Flags[UpdaterFlag] = time.Now().Format(UpdaterFlagDateFormat)
 
 	// update the resp flag with summary of found
 	if len(resp.Vulnerabilities) > 0 {
-		resp.FlagName = UpdaterFlag
-		resp.FlagValue = time.Now().Format(UpdaterFlagDateFormat)
+		log.WithField("package", "Red Hat").Debug(fmt.Sprintf("updating (found: %d vulnerabilities)...", len(resp.Vulnerabilities)))
 	} else {
 		log.WithField("package", "Red Hat").Debug("no update")
 	}
@@ -550,15 +553,10 @@ func DbLookupIsAdvisoryProcessed(definition ParsedAdvisory, datastore database.D
 	}
 }
 
-// update the db key/value table with the given manifest entry's signature
-func DbUpdateManifestEntrySignature(manifestEntry ManifestEntry, datastore database.Datastore) {
-	// store the latest sha256 hash for this entry
-	err := database.UpdateKeyValueAndCommit(datastore,
-		DbManifestEntryKeyPrefix + manifestEntry.BzipPath, manifestEntry.Signature)
-	if err != nil {
-		// log error and continue
-		log.Error(err)
-	}
+// construct the flag used to update the db key/value table with the given manifest entry's signature
+func ConstructFlagForManifestEntrySignature(manifestEntry ManifestEntry, datastore database.Datastore) (string, string) {
+	// use the latest sha256 hash for this entry
+	return DbManifestEntryKeyPrefix + manifestEntry.BzipPath, manifestEntry.Signature
 }
 
 // check the db key/value table to determine whether the given entry is new/updated
