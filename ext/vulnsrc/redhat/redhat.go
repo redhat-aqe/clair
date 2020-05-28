@@ -201,12 +201,14 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 				}
 				moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
 				if len(moduleNamespaces) > 0 {
-					// modular rpm has namespace made of module_name:stream
-					feature.Namespace = database.Namespace{
-						Name:          moduleNamespaces[0],
-						VersionFormat: modulerpm.ParserName,
+					for _, moduleNamespace := range moduleNamespaces {
+						// modular rpm has namespace made of module_name:stream
+						feature.Namespace = database.Namespace{
+							Name:          moduleNamespace,
+							VersionFormat: modulerpm.ParserName,
+						}
+						vulnerability.Affected = append(vulnerability.Affected, feature)
 					}
-					vulnerability.Affected = append(vulnerability.Affected, feature)
 				} else {
 					// normal rpm uses CPE namespaces
 					cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
