@@ -353,10 +353,6 @@ func ParseNVRA(rpmName string) RpmNvra {
 	return rpmNvra
 }
 
-func IsRmpArchSupported(rpmName string) bool {
-	return IsArchSupported(ParseNVRA(rpmName).Arch)
-}
-
 func IsArchSupported(arch string) bool {
 	// some arch values may be pattern-based, e.g.: "aarch64|ppc64le|s390x|x86_64"
 	if (strings.Contains(arch, "|")) {
