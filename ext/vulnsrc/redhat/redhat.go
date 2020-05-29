@@ -343,19 +343,6 @@ func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
     return criterions
 }
 
-func ParseNVRA(rpmName string) RpmNvra {
-	// parse NVRA from RPM name
-	// golang-1.6.3-2.el7.x86_64.rpm
-	// Name        : golang
-	// Version     : 1.6.3
-	// Release     : 2.el7
-	// Architecture: x86_64
-	var regexRpmNVRA = regexp.MustCompile(`(.*/)*(.*)-(.*)-(.*?)\.([^.]*)(\.rpm)`)
-	matches := regexRpmNVRA.FindStringSubmatch(rpmName)[2:6]
-	rpmNvra := RpmNvra{matches[0], matches[1], matches[2], matches[3]}
-	return rpmNvra
-}
-
 func IsArchSupported(archRegex string) bool {
 	// treat empty arch package info as noarch
 	if (archRegex == "") {
@@ -522,16 +509,6 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	}
 	// return the current db value
 	return dbLastAdvisoryDate
-}
-
-// update the db key/value table with the given last advisory date
-func DbStoreLastAdvisoryDate(lastAdvisoryDate string, datastore database.Datastore) {
-	err := database.UpdateKeyValueAndCommit(datastore,
-		DbLastAdvisoryDateKey, lastAdvisoryDate)
-	if err != nil {
-		// log the error and continue
-		log.Error("Unable to store last advisory date, caused by: " + err.Error())
-	}
 }
 
 // check the db key/value table for the given advisory's id, compare the stored 'version' value to current
