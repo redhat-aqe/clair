@@ -79,8 +79,8 @@ github.com/hashicorp/uuid v0.0.0-20160311170451-ebb0a03e909c/go.mod h1:fHzc09Uny
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/ishidawataru/sctp v0.0.0-20180213033435-07191f837fed/go.mod h1:DM4VvS+hD/kDi1U1QsX2fnZowwBhqD0Dk3bRPKF/Oc8=
 github.com/jaguilar/vt100 v0.0.0-20150826170717-2703a27b14ea/go.mod h1:QMdK4dGB3YhEW2BmA1wgGpPYI3HZy/5gD705PXKUVSg=
-github.com/johnbe11/clair v2.0.7+incompatible h1:ktipCkm47rCheUEsNGl+7WXYYhEMqyzDTEYoBqwnJNQ=
-github.com/johnbe11/clair/v3 v3.0.0-20200221170042-9897d151e93d h1:ToRXANp/Ss1EyGLyboQh6aoNN/FyL8aKN1wRW1ROw5E=
+github.com/quay/clair v2.0.7+incompatible h1:ktipCkm47rCheUEsNGl+7WXYYhEMqyzDTEYoBqwnJNQ=
+github.com/quay/clair/v3 v3.0.0-20200221170042-9897d151e93d h1:ToRXANp/Ss1EyGLyboQh6aoNN/FyL8aKN1wRW1ROw5E=
 github.com/julienschmidt/httprouter v1.2.0 h1:TDTW5Yz1mjftljbcKqRcrYhd4XeOoI98t+9HbQbYf7g=
 github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7VTCxuUUipMqKk8s4w=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=
