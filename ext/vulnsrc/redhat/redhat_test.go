@@ -311,32 +311,6 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 	}
 }
 
-func TestParseNVRA(t *testing.T) {
-	// golang-1.6.3-2.el7.x86_64.rpm
-	// Name        : golang
-	// Version     : 1.6.3
-	// Release     : 2.el7
-	// Architecture: x86_64
-	type args struct {
-		rpmName string
-	}
-	tests := []struct {
-		name string
-		args args
-		want RpmNvra
-	}{
-		{"golang-1.6.3-2.el7.x86_64.rpm", args{"golang-1.6.3-2.el7.x86_64.rpm"},
-			RpmNvra{"golang", "1.6.3", "2.el7", "x86_64"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseNVRA(tt.args.rpmName); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("ParseNVRA() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsSignificantSeverity(t *testing.T) {
 	type args struct {
 		severity string
