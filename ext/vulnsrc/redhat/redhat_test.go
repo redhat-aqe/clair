@@ -100,6 +100,32 @@ func TestIsArchSupported(t *testing.T) {
 	}
 }
 
+func TestIsSupportedDefinitionType(t *testing.T) {
+	type args struct {
+		arch string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{"patch"}, true},
+		{"2", args{"vulnerability"}, false},
+		{"3", args{"miscellaneous"}, false},
+		{"4", args{"other"}, false},
+		{"5", args{""}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// debug
+			log.Info(fmt.Sprintf("IsSupportedDefinitionType(%s)", tt.args.arch))
+			if got := IsSupportedDefinitionType(tt.args.arch); got != tt.want {
+				t.Errorf("IsSupportedDefinitionType(%v) = %v, want %v", tt.args.arch, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetUnprocessedAdvisories(t *testing.T) {
 	pwd, _ := os.Getwd()
 	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"

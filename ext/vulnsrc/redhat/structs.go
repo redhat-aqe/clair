@@ -46,6 +46,7 @@ type OvalV2AdvisoryDefinitions struct {
 }
 
 type OvalV2AdvisoryDefinition struct {
+	Class            string            `xml:"class,attr"`
 	Id               string            `xml:"id,attr"`
 	Version          string            `xml:"version,attr"`
 	Metadata         OvalV2Metadata    `xml:"metadata"`
@@ -170,6 +171,7 @@ type RpmNvra struct {
 }
 
 type ParsedAdvisory struct {
+	Class            string
 	Id               string
 	Version          string
 	Metadata         OvalV2Metadata
