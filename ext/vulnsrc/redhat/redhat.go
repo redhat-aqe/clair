@@ -52,6 +52,8 @@ const (
 
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
 
+var SupportedDefinitionTypes = map[string]bool { "patch":true, "vulnerability":false, "miscellaneous":false }
+
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
 }
@@ -362,6 +364,10 @@ func IsArchSupported(archRegex string) bool {
 	return false
 }
 
+func IsSupportedDefinitionType(defClass string) bool {
+	return SupportedDefinitionTypes[defClass]
+}
+
 // parse affected_cpe_list
 func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
 	var cpeNames []string
@@ -380,6 +386,11 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 	sinceDate := DbLookupLastAdvisoryDate(datastore)
 	var advisories []ParsedAdvisory
 	for _, definition := range ovalDoc.DefinitionSet.Definitions {
+		// check whether this is a supported definition type
+		if (!IsSupportedDefinitionType(definition.Class)) {
+			// not supported; skip it
+			continue
+		}
 		// check if this entry has already been processed (based on its issued date)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
@@ -418,6 +429,7 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 
 func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) (ParsedAdvisory) {
 	parsedAdvisory := ParsedAdvisory{
+		Class: definition.Class,
 		Id: definition.Id,
 		Version: definition.Version,
 		Metadata: definition.Metadata,
