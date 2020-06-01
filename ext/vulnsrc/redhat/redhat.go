@@ -50,9 +50,11 @@ const (
 	CveURL                   = "https://access.redhat.com/security/cve/"
 )
 
+// supported architectures
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
 
-var SupportedDefinitionTypes = map[string]bool { "patch":true, "vulnerability":false, "miscellaneous":false }
+// supported definition classes
+var SupportedDefinitionTypes = map[string]bool { "patch":true }
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
