@@ -139,6 +139,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	log.Info(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
 	// update the db ky/value entry for the advisory-last-checked-on date (current timestamp, as coarse YYYY-MM-dd format)
 	resp.Flags[UpdaterFlag] = time.Now().Format(UpdaterFlagDateFormat)
+	resp.Flags[DbLastAdvisoryDateKey] = time.Now().Format(UpdaterFlagDateFormat)
 
 	// update the resp flag with summary of found
 	if len(resp.Vulnerabilities) > 0 {
