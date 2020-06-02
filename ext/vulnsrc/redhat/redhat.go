@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// redhat.go provides fetch/parsing/etc specific to version-2 oval
+// Package redhat provides fetch/parsing/etc specific to version-2 oval
 package redhat
 
 import (
@@ -38,22 +38,32 @@ import (
 )
 
 const (
+	// PulpV2BaseURL - base url for pulp v2 content
 	PulpV2BaseURL            = "https://www.redhat.com/security/data/oval/v2/"
+	// PulpManifest - url suffix for pulp manifest file
 	PulpManifest             = "PULP_MANIFEST"
+	// DbManifestEntryKeyPrefix - key prefix used to create flag for manifest entry hash key/value
 	DbManifestEntryKeyPrefix = "oval.v2.pulp.manifest.entry."
+	// DbLastAdvisoryDateKey - key prefix used to create flag for last advisory date key/value
 	DbLastAdvisoryDateKey    = "oval.v2.advisory.date.issued"
-	DefaultLastAdvisoryDate  = "1970-01-01"          // literal date (in case no existing last advisory date is found)
-	AdvisoryDateFormat       = "2006-01-02"          // 'magical reference date' for datetime format
+	// DefaultLastAdvisoryDate - literal date (in case no existing last advisory date is found)
+	DefaultLastAdvisoryDate  = "1970-01-01"
+	// AdvisoryDateFormat date format for advisory dates ('magical reference date' for datetime format)
+	AdvisoryDateFormat       = "2006-01-02"
+	// UpdaterFlag - key used for flag for updater
 	UpdaterFlag              = "RedHatOvalV2Updater"
-	UpdaterFlagDateFormat    = "2006-01-02 15:04:05" // 'magical reference date' for datetime format
+	// UpdaterFlagDateFormat - date format for updater flag dates ('magical reference date' for datetime format)
+	UpdaterFlagDateFormat    = "2006-01-02 15:04:05"
+	// AffectedType - affected type
 	AffectedType             = database.BinaryPackage
+	// CveURL - url for cve content
 	CveURL                   = "https://access.redhat.com/security/cve/"
 )
 
-// supported architectures
+// SupportedArches - supported architectures
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
 
-// supported definition classes
+// SupportedDefinitionTypes - supported definition classes
 var SupportedDefinitionTypes = map[string]bool { "patch":true }
 
 func init() {
@@ -88,19 +98,19 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			log.Info("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
 
 			// unzip and read the bzip-compressed oval file into an xml string
-			ovalXml, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
+			ovalXML, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
 			if err != nil {
 				// log error and continue
 				log.Error(err)
 				continue
 			}
-			if (ovalXml == "") {
+			if (ovalXML == "") {
 				log.Error("Cannot parse empty source oval doc")
 				continue
 			}
 			//
 			ovalDoc := OvalV2Document{}
-			err = xml.Unmarshal([]byte(ovalXml), &ovalDoc)
+			err = xml.Unmarshal([]byte(ovalXML), &ovalDoc)
 			if err != nil {
 				// log error and continue
 				log.Error(err)
@@ -155,7 +165,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	return resp, nil
 }
 
-// gather any non-processed pulp manifest entry advisories
+// GatherUnprocessedAdvisories - gather any non-processed pulp manifest entry advisories
 func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
 	// get all unprocessed advisories from the oval file
 	foundAdvisories, err := ProcessAdvisoriesSinceLastDbUpdate(ovalDoc, datastore)
@@ -167,6 +177,7 @@ func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Docu
 	return foundAdvisories, nil
 }
 
+// CollectVulnerabilities - walk definitions and collect relevant/unprocessed vulnerability info
 func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// walk the provided set of advisory definitions
 	for _, advisoryDefinition := range advisoryDefinitions {
@@ -175,7 +186,7 @@ func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2
 	return vulnerabilities
 }
 
-// get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
+// CollectVulnsForAdvisory - get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
 func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// first, check the advisory severity
 	if (IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity)) {
@@ -254,7 +265,7 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 	return
 }
 
-// construct the []VulnerabilityID set from the given advisory definition
+// ConstructVulnerabilityIDs - construct the []VulnerabilityID set from the given advisory definition
 func ConstructVulnerabilityIDs(advisoryDefinition ParsedAdvisory) []database.VulnerabilityID {
 	var vulnIDs []database.VulnerabilityID
 	rhsaName := ParseRhsaName(advisoryDefinition)
@@ -266,7 +277,7 @@ func ConstructVulnerabilityIDs(advisoryDefinition ParsedAdvisory) []database.Vul
 	return vulnIDs
 }
 
-// parse the CVE name(s) (e.g.: "CVE-2019-11249") from the given advisory definition
+// ParseCveNames - parse the CVE name(s) (e.g.: "CVE-2019-11249") from the given advisory definition
 func ParseCveNames(advisoryDefinition ParsedAdvisory) []string {
 	var cveNames []string
 	for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
@@ -275,35 +286,34 @@ func ParseCveNames(advisoryDefinition ParsedAdvisory) []string {
 	return cveNames
 }
 
-// parse the RHSA name (e.g.: "RHBA-2019:2794") from the given advisory definition
+// ParseRhsaName - parse the RHSA name (e.g.: "RHBA-2019:2794") from the given advisory definition
 func ParseRhsaName(advisoryDefinition ParsedAdvisory) string {
 	return strings.TrimSpace(advisoryDefinition.Metadata.Title[:strings.Index(advisoryDefinition.Metadata.Title, ": ")])
 }
 
-// parse the namespace from the given advisory definition
+// ParseVulnerabilityNamespace - parse the namespace from the given advisory definition
 func ParseVulnerabilityNamespace(advisoryDefinition ParsedAdvisory) string {
 	// use criteria parse result
 	moduleNamespaces := ParseCriteriaForModuleNamespaces(advisoryDefinition.Criteria)
 	if len(moduleNamespaces) > 0 {
 		// use MODULE namespace
 		return moduleNamespaces[0]
-	} else {
-		// use CPE namespace
-		cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
-		if err != nil {
-			// log error and continue
-			log.Error(err)
-			return ""
-		}
-		if len(cpeNames) == 0 {
-			// no namespace found
-			return ""
-		} else {
-			return cpeNames[0]
-		}
 	}
+	// use CPE namespace
+	cpeNames, err := ParseCpeNamesFromAffectedCpeList(advisoryDefinition.Metadata.Advisory.AffectedCpeList)
+	if err != nil {
+		// log error and continue
+		log.Error(err)
+		return ""
+	}
+	if len(cpeNames) == 0 {
+		// no namespace found
+		return ""
+	}
+	return cpeNames[0]
 }
 
+// GetSeverity - get the Severity value which corresponds to the given string
 func GetSeverity(severity string) database.Severity {
 	switch strings.Title(strings.ToLower(severity)) {
 	case "None":
@@ -324,7 +334,7 @@ func GetSeverity(severity string) database.Severity {
 	}
 }
 
-// checks whether the given severity is significant (used to determine whether vulns will be parsed and stored for it)
+// IsSignificantSeverity - checks whether the given severity is significant (used to determine whether vulns will be parsed and stored for it)
 func IsSignificantSeverity(severity string) bool {
 	switch strings.Title(strings.ToLower(severity)) {
 		case "None":
@@ -342,12 +352,25 @@ func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
         criterions = append(criterions, extractAllCriterions(criterion)...)
     }
     for _, criterion := range criteria.Criterion {
-        // append criterion
-        criterions = append(criterions, criterion)
+		if (IsRelevantCriterion(criterion)) {
+			// append criterion
+			criterions = append(criterions, criterion)
+		}
     }
     return criterions
 }
 
+// IsRelevantCriterion - check whether the given criterion is relevant
+func IsRelevantCriterion(criterion OvalV2Criterion) bool {
+	// check comment for matching "is earlier than" substring
+	if strings.Contains(criterion.Comment, "is earlier than") {
+		return true
+	}
+	// nothing matched
+	return false
+}
+
+// IsArchSupported - check whether the given architecture regex represents a supported arch
 func IsArchSupported(archRegex string) bool {
 	// treat empty arch package info as noarch
 	if (archRegex == "") {
@@ -366,11 +389,12 @@ func IsArchSupported(archRegex string) bool {
 	return false
 }
 
+// IsSupportedDefinitionType - check whether the given definition class corresponds to a supported def type
 func IsSupportedDefinitionType(defClass string) bool {
 	return SupportedDefinitionTypes[defClass]
 }
 
-// parse affected_cpe_list
+// ParseCpeNamesFromAffectedCpeList - parse affected_cpe_list
 func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
 	var cpeNames []string
 	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 2 {
@@ -383,7 +407,7 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 	return cpeNames, nil
 }
 
-// get advisories from the given oval document which were issued since the last update (based on db value)
+// ProcessAdvisoriesSinceLastDbUpdate - get advisories from the given oval document which were issued since the last update (based on db value)
 func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore database.Datastore) ([]ParsedAdvisory, error) {
 	sinceDate := DbLookupLastAdvisoryDate(datastore)
 	var advisories []ParsedAdvisory
@@ -429,10 +453,11 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 	return advisories, nil
 }
 
+// ParseAdvisory - parse the given advisory definition
 func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) (ParsedAdvisory) {
 	parsedAdvisory := ParsedAdvisory{
 		Class: definition.Class,
-		Id: definition.Id,
+		ID: definition.ID,
 		Version: definition.Version,
 		Metadata: definition.Metadata,
 		Criteria: definition.Criteria,
@@ -441,6 +466,7 @@ func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) 
 	return parsedAdvisory
 }
 
+// GetPackageList - get the package list associated with the given criteria
 func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvras []ParsedRmpNvra) {
 	criterions := extractAllCriterions(criteria)
 	for _, criterion := range criterions {
@@ -454,17 +480,18 @@ func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvra
 	return
 }
 
-func FindPackageNvraInfo(testRefId string, ovalDoc OvalV2Document) ParsedRmpNvra {
+// FindPackageNvraInfo - get nvra info for the given test ref
+func FindPackageNvraInfo(testRefID string, ovalDoc OvalV2Document) ParsedRmpNvra {
 	var parsedNvra ParsedRmpNvra
     for _, test := range ovalDoc.TestSet.Tests {
-		if test.Id == testRefId {
+		if test.ID == testRefID {
 			for _, obj := range ovalDoc.ObjectSet.Objects {
-				if obj.Id == test.ObjectRef.Ref {
+				if obj.ID == test.ObjectRef.Ref {
 					parsedNvra.Name = obj.Name
 				}
 			}
 			for _, state := range ovalDoc.StateSet.States {
-				if (state.Id == test.StateRef.Ref) {
+				if (state.ID == test.StateRef.Ref) {
 					parsedNvra.Evr = state.Evr.Value
 					parsedNvra.Arch = state.Arch.Value
 				}
@@ -474,7 +501,7 @@ func FindPackageNvraInfo(testRefId string, ovalDoc OvalV2Document) ParsedRmpNvra
 	return parsedNvra
 }
 
-// determine whether the given advisory date string is since the last update
+// IsAdvisorySinceDate - determine whether the given advisory date string is since the last update
 func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 	if sinceDate == "" {
 		sinceDate = DefaultLastAdvisoryDate
@@ -494,7 +521,7 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 	return advisoryTime.After(sinceTime)
 }
 
-// determine whether the given advisory date string is the same as the last update
+// IsAdvisorySameDate - determine whether the given advisory date string is the same as the last update
 func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 	if sinceDate == "" {
 		sinceDate = DefaultLastAdvisoryDate
@@ -514,7 +541,7 @@ func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 	return advisoryTime.Equal(sinceTime)
 }
 
-// lookup the last advisory date from db key/value table
+// DbLookupLastAdvisoryDate - lookup the last advisory date from db key/value table
 func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	dbLastAdvisoryDate, ok, err := database.FindKeyValueAndRollback(datastore, DbLastAdvisoryDateKey)
 	if err != nil {
@@ -530,7 +557,7 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 	return dbLastAdvisoryDate
 }
 
-// check the db key/value table for the given advisory's id, compare the stored 'version' value to current
+// DbLookupIsAdvisoryProcessed - check the db key/value table for the given advisory's id, compare the stored 'version' value to current
 func DbLookupIsAdvisoryProcessed(definition ParsedAdvisory, datastore database.Datastore) bool {
 	// check the db to see if the associated vulnerability name is already stored
 	vulnIds := ConstructVulnerabilityIDs(definition)
@@ -543,19 +570,18 @@ func DbLookupIsAdvisoryProcessed(definition ParsedAdvisory, datastore database.D
 	if len(foundVulns) > 0 {
 		// found a record, so this has already been processed
 		return true
-	} else {
-		// no record found, so it hasn't been processed yet
-		return false
 	}
+	// no record found, so it hasn't been processed yet
+	return false
 }
 
-// construct the flag used to update the db key/value table with the given manifest entry's signature
+// ConstructFlagForManifestEntrySignature - construct the flag used to update the db key/value table with the given manifest entry's signature
 func ConstructFlagForManifestEntrySignature(manifestEntry ManifestEntry, datastore database.Datastore) (string, string) {
 	// use the latest sha256 hash for this entry
 	return DbManifestEntryKeyPrefix + manifestEntry.BzipPath, manifestEntry.Signature
 }
 
-// check the db key/value table to determine whether the given entry is new/updated
+// IsNewOrUpdatedManifestEntry - check the db key/value table to determine whether the given entry is new/updated
 //   since the last time the manifest was processed
 func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database.Datastore) bool {
 	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore,
@@ -573,9 +599,9 @@ func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database
 	return manifestEntry.Signature != currentDbSignature
 }
 
-// fetch the PULP_MANIFEST file, return body as a string
-func FetchPulpManifest(pulpManifestUrl string) (string, error) {
-	resp, err := httputil.GetWithUserAgent(pulpManifestUrl)
+// FetchPulpManifest - fetch the PULP_MANIFEST file, return body as a string
+func FetchPulpManifest(pulpManifestURL string) (string, error) {
+	resp, err := httputil.GetWithUserAgent(pulpManifestURL)
 	if err != nil {
 		log.Error("Unable to fetch pulp manifest, caused by: " + err.Error())
 		return "", err
@@ -593,7 +619,7 @@ func FetchPulpManifest(pulpManifestUrl string) (string, error) {
 	return string(body), err
 }
 
-// parse the PULP_MANIFEST file body
+// ParsePulpManifest - parse the PULP_MANIFEST file body
 func ParsePulpManifest(pulpManifestBody string) []ManifestEntry {
 	var manifestEntries []ManifestEntry
 	if pulpManifestBody != "" {
@@ -612,7 +638,7 @@ func ParsePulpManifest(pulpManifestBody string) []ManifestEntry {
 	return manifestEntries
 }
 
-// return a ManifestEntry from parsing a single line from PULP_MANIFEST
+// ParsePulpManifestLine - return a ManifestEntry from parsing a single line from PULP_MANIFEST
 func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 	entry := ManifestEntry{}
 	if srcManifestLine == "" {
@@ -636,7 +662,7 @@ func ParsePulpManifestLine(srcManifestLine string) (ManifestEntry, error) {
 	return entry, err
 }
 
-// decompress and read a bzip2-compressed oval file, return the xml content as string
+// ReadBzipOvalFile - decompress and read a bzip2-compressed oval file, return the xml content as string
 func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 	resp, err := httputil.GetWithUserAgent(bzipOvalFile)
 	if err != nil {
@@ -669,7 +695,7 @@ func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 	return string(content), nil
 }
 
-// parse one definition
+// ParseCriteriaForModuleNamespaces - parse one definition
 func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) ([]string) {
     var moduleNamespaces []string
 	criterions := extractAllCriterions(criteria)
