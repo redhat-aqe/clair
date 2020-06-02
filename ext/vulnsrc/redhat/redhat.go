@@ -445,7 +445,11 @@ func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvra
 	criterions := extractAllCriterions(criteria)
 	for _, criterion := range criterions {
 		// get package info
-		parsedNvras = append(parsedNvras, FindPackageNvraInfo(criterion.TestRef, ovalDoc))
+		parsedRpmNvra := FindPackageNvraInfo(criterion.TestRef, ovalDoc)
+		// only include parsed nvra data if non-empty
+		if (parsedRpmNvra.Evr != "") {
+			parsedNvras = append(parsedNvras, parsedRpmNvra)
+		}
 	}
 	return
 }
@@ -677,7 +681,6 @@ func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) ([]string) {
 		if matches != nil && len(matches) > 2 && matches[2] != "" {
 			moduleNamespaces = append(moduleNamespaces, matches[2])
 		}
-		// moduleNamespaces = append(moduleNamespaces, criterion.Comment)
 	}
     return moduleNamespaces
 }
