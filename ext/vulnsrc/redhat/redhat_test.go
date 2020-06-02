@@ -46,9 +46,9 @@ func SetLastAdvisoryDate(d string) {
 
 func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 
-	manifestEntry_1 := ManifestEntry{
+	manifestEntry1 := ManifestEntry{
 		"RHEL8/ansible-2.8.oval.xml.bz2", "14a04f048080a246ef4e1d1c76e5beec12d16cbfd8013235f0ff2f88e4d78aed", 3755}
-	manifestEntry_2 := ManifestEntry{
+	manifestEntry2 := ManifestEntry{
 		"RHEL8/ansible-2.8.oval.xml.bz2", "320eeb4984a0678e4fa9a3f8421b87f2a57a2922cd4e3f582eb7cc735239ce72", 3755}
 	type args struct {
 		manifestEntry ManifestEntry
@@ -59,8 +59,8 @@ func TestIsNewOrUpdatedManifestEntry(t *testing.T) {
 		args args
 		want bool
 	}{
-		{"1", args{manifestEntry_1, newmockDatastore()}, false},
-		{"2", args{manifestEntry_2, newmockDatastore()}, true},
+		{"1", args{manifestEntry1, newmockDatastore()}, false},
+		{"2", args{manifestEntry2, newmockDatastore()}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -95,6 +95,32 @@ func TestIsArchSupported(t *testing.T) {
 			log.Info(fmt.Sprintf("IsArchSupported(%s)", tt.args.arch))
 			if got := IsArchSupported(tt.args.arch); got != tt.want {
 				t.Errorf("IsArchSupported(%v) = %v, want %v", tt.args.arch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsRelevantCriterion(t *testing.T) {
+	type args struct {
+		criterion OvalV2Criterion
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{OvalV2Criterion{Comment:"softhsm-devel is earlier than 0:2.4.0-2.module+el8.1.0+4098+f286395e"}}, true},
+		{"2", args{OvalV2Criterion{Comment:"Red Hat Enterprise Linux must be installed"}}, false},
+		{"3", args{OvalV2Criterion{Comment:"Module idm:DL1 is enabled"}}, false},
+		{"4", args{OvalV2Criterion{Comment:"softhsm-devel is signed with Red Hat redhatrelease2 key"}}, false},
+		{"5", args{OvalV2Criterion{Comment:""}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// debug
+			log.Info(fmt.Sprintf("IsRelevantCriterion(%s)", tt.args.criterion))
+			if got := IsRelevantCriterion(tt.args.criterion); got != tt.want {
+				t.Errorf("IsRelevantCriterion(%v) = %v, want %v", tt.args.criterion, got, tt.want)
 			}
 		})
 	}
@@ -211,7 +237,7 @@ func TestFetchPulpManifest(t *testing.T) {
 	}))
 	defer srv.Close()
 	type args struct {
-		pulpManifestUrl string
+		pulpManifestURL string
 	}
 	tests := []struct {
 		name    string
@@ -223,7 +249,7 @@ func TestFetchPulpManifest(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := FetchPulpManifest(tt.args.pulpManifestUrl)
+			got, err := FetchPulpManifest(tt.args.pulpManifestURL)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("FetchPulpManifest() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -249,17 +275,17 @@ func TestReadBzipOvalFile(t *testing.T) {
 		log.Debug("found " + xmlFilePath + ": " + string(xmlContent))
 	}
 	// httptest provides the bzip file download endpoint
-	srv_1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(string(bzipContent)))
 	}))
-	defer srv_1.Close()
+	defer srv1.Close()
 	// httptest provides the non-bzip file download endpoint
-	srv_2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		w.Write([]byte(string("ABCD1234")))
 	}))
-	defer srv_2.Close()
+	defer srv2.Close()
 	type args struct {
 		bzipOvalFile string
 	}
@@ -269,8 +295,8 @@ func TestReadBzipOvalFile(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"given valid bzip2 file, expect success", args{string(srv_1.URL)}, string(xmlContent), false},
-		{"given non-bzip2 file, expect error", args{string(srv_2.URL)}, "", false},
+		{"given valid bzip2 file, expect success", args{string(srv1.URL)}, string(xmlContent), false},
+		{"given non-bzip2 file, expect error", args{string(srv2.URL)}, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
