@@ -51,6 +51,7 @@ import (
 	_ "github.com/quay/clair/v3/ext/imagefmt/aci"
 	_ "github.com/quay/clair/v3/ext/imagefmt/docker"
 	_ "github.com/quay/clair/v3/ext/imgpostprocessor/redhatcpe"
+	_ "github.com/quay/clair/v3/ext/notification/stomp"
 	_ "github.com/quay/clair/v3/ext/notification/webhook"
 	_ "github.com/quay/clair/v3/ext/vulnmdsrc/nvd"
 	_ "github.com/quay/clair/v3/ext/vulnsrc/alpine"
@@ -134,7 +135,9 @@ func Boot(config *Config) {
 
 	defer db.Close()
 
-	clair.RegisterConfiguredDetectors(db)
+	if ro, ok := db.(database.ReadOnly); !ok || !ro.ReadOnly() {
+		clair.RegisterConfiguredDetectors(db)
+	}
 
 	// Start notifier
 	st.Begin()
