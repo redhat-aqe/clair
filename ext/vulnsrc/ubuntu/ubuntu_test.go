@@ -31,26 +31,33 @@ func TestUbuntuParser(t *testing.T) {
 	_, filename, _, _ := runtime.Caller(0)
 	path := filepath.Join(filepath.Dir(filename))
 
-	// Test parsing testdata/fetcher_openubuntu_test.1.xml
-	testFile, _ := os.Open(path + "/testdata/fetcher_ubuntu_test.xml")
-	defer testFile.Close()
-
-	vulnerabilities, generationTime, err := parseOval(testFile)
-	assert.Nil(t, err)
-	assert.Equal(t, int64(1565935750), generationTime)
-
-	if assert.Nil(t, err) && assert.Len(t, vulnerabilities, 1) {
-		var vulnerability = vulnerabilities[0]
+	// Test parsing testdata/fetcher_
+	testData, _ := os.Open(filepath.Join(path, "/testdata/fetcher_ubuntu_test.txt"))
+	defer testData.Close()
+	vulnerability, unknownReleases, err := parseUbuntuCVE(testData)
+	if assert.Nil(t, err) {
 		assert.Equal(t, "CVE-2015-4471", vulnerability.Name)
 		assert.Equal(t, database.MediumSeverity, vulnerability.Severity)
-		assert.Equal(t, "Off-by-one error in the lzxd_decompress function in lzxd.c in libmspack before 0.5 allows remote attackers to cause a denial of service (buffer under-read and application crash) via a crafted CAB archive. It was discovered that cabextract incorrectly handled certain malformed CAB files. A remote attacker could use this issue to cause cabextract to crash, resulting in a denial of service.", vulnerability.Description)
-		assert.Equal(t, "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2015-4471", vulnerability.Link)
+		assert.Equal(t, "Off-by-one error in the lzxd_decompress function in lzxd.c in libmspack before 0.5 allows remote attackers to cause a denial of service (buffer under-read and application crash) via a crafted CAB archive.", vulnerability.Description)
+
+		// Unknown release (line 28)
+		_, hasUnkownRelease := unknownReleases["unknown"]
+		assert.True(t, hasUnkownRelease)
 
 		expectedFeatures := []database.AffectedFeature{
 			{
-				FeatureType: database.BinaryPackage,
+				FeatureType: affectedType,
 				Namespace: database.Namespace{
-					Name:          "ubuntu:xenial",
+					Name:          "ubuntu:14.04",
+					VersionFormat: dpkg.ParserName,
+				},
+				FeatureName:     "libmspack",
+				AffectedVersion: versionfmt.MaxVersion,
+			},
+			{
+				FeatureType: affectedType,
+				Namespace: database.Namespace{
+					Name:          "ubuntu:15.04",
 					VersionFormat: dpkg.ParserName,
 				},
 				FeatureName:     "libmspack",
@@ -58,13 +65,14 @@ func TestUbuntuParser(t *testing.T) {
 				AffectedVersion: "0.4-3",
 			},
 			{
-				FeatureType: database.BinaryPackage,
+				FeatureType: affectedType,
 				Namespace: database.Namespace{
-					Name:          "ubuntu:xenial",
+					Name:          "ubuntu:15.10",
 					VersionFormat: dpkg.ParserName,
 				},
-				FeatureName:     "cabextract",
-				AffectedVersion: versionfmt.MaxVersion,
+				FeatureName:     "libmspack-anotherpkg",
+				FixedInVersion:  "0.1",
+				AffectedVersion: "0.1",
 			},
 		}
 
