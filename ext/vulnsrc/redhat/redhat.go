@@ -32,14 +32,13 @@ import (
 	"github.com/quay/clair/v3/ext/versionfmt/modulerpm"
 	"github.com/quay/clair/v3/ext/versionfmt/rpm"
 	"github.com/quay/clair/v3/pkg/commonerr"
+	"github.com/quay/clair/v3/pkg/envutil"
 	"github.com/quay/clair/v3/pkg/httputil"
 	"github.com/quay/clair/v3/ext/vulnsrc"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	// PulpV2BaseURL - base url for pulp v2 content
-	PulpV2BaseURL            = "https://www.redhat.com/security/data/oval/v2/"
 	// PulpManifest - url suffix for pulp manifest file
 	PulpManifest             = "PULP_MANIFEST"
 	// DbManifestEntryKeyPrefix - key prefix used to create flag for manifest entry hash key/value
@@ -60,6 +59,9 @@ const (
 	CveURL                   = "https://access.redhat.com/security/cve/"
 )
 
+// OvalV2BaseURL - base url for oval v2 content
+var OvalV2BaseURL = envutil.GetEnv("OVAL_V2_URL", "https://www.redhat.com/security/data/oval/v2/")
+
 // SupportedArches - supported architectures
 var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
 
@@ -75,9 +77,9 @@ func (u *updater) Clean() {}
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
-	pulpManifestBody, err := FetchPulpManifest(PulpV2BaseURL + PulpManifest)
+	pulpManifestBody, err := FetchPulpManifest(OvalV2BaseURL + PulpManifest)
 	if err != nil {
-		log.Error("Unable to fetch pulp manifest file: " + PulpV2BaseURL + PulpManifest)
+		log.Error("Unable to fetch pulp manifest file: " + OvalV2BaseURL + PulpManifest)
 		return resp, err
 	}
 	log.Info("Found pulp manifest: " + pulpManifestBody)
@@ -98,7 +100,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			log.Info("Found updated/new pulp manifest entry. Processing: " + manifestEntry.BzipPath)
 
 			// unzip and read the bzip-compressed oval file into an xml string
-			ovalXML, err := ReadBzipOvalFile(PulpV2BaseURL + manifestEntry.BzipPath)
+			ovalXML, err := ReadBzipOvalFile(OvalV2BaseURL + manifestEntry.BzipPath)
 			if err != nil {
 				// log error and continue
 				log.Error(err)
