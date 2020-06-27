@@ -50,7 +50,7 @@ const (
 	// AdvisoryDateFormat date format for advisory dates ('magical reference date' for datetime format)
 	AdvisoryDateFormat       = "2006-01-02"
 	// UpdaterFlag - key used for flag for updater
-	UpdaterFlag              = "RedHatOvalV2Updater"
+	UpdaterFlag              = "redHatUpdater"
 	// UpdaterFlagDateFormat - date format for updater flag dates ('magical reference date' for datetime format)
 	UpdaterFlagDateFormat    = "2006-01-02 15:04:05"
 	// AffectedType - affected type
@@ -136,26 +136,38 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			log.WithFields(log.Fields{
 				"items":   len(unprocessedAdvisories),
 				"updater": "RedHat",
-			}).Info("Start processing advisories")
+			}).Info("Start parsing advisories for vulnerabilities")
 
-			resp.Vulnerabilities = append(resp.Vulnerabilities, CollectVulnerabilities(unprocessedAdvisories, ovalDoc)...)
+			collectedVulnerabilities := CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
+			log.WithFields(log.Fields{
+				"collectedVulns": len(collectedVulnerabilities),
+				"pendingVulns": len(resp.Vulnerabilities),
+				"manifestEntry": manifestEntry.BzipPath,
+			}).Info("Append parsed vulnerabilities to pending set")
+
+			resp.Vulnerabilities = append(resp.Vulnerabilities, collectedVulnerabilities...)
+
+			log.Info(fmt.Sprintf("Total pending vulns: %d", len(resp.Vulnerabilities)))
 
 			// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
 			flagKey, flagVal := ConstructFlagForManifestEntrySignature(manifestEntry, datastore)
 			resp.Flags[flagKey] = flagVal
 
+			log.Info(fmt.Sprintf("continuing next loop..."))
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
 			log.Info("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
+			continue
 		}
 
 	}
 
 	// debug
 	log.Info(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
-	// update the db ky/value entry for the advisory-last-checked-on date (current timestamp, as coarse YYYY-MM-dd format)
+	// update the db key/value entry for the updater-last-ran date (current timestamp, using "YYYY-MM-dd hh:mm:ss" format)
 	resp.Flags[UpdaterFlag] = time.Now().Format(UpdaterFlagDateFormat)
-	resp.Flags[DbLastAdvisoryDateKey] = time.Now().Format(UpdaterFlagDateFormat)
+	// update the db key/value entry for the advisory-last-checked-on date (current timestamp, using advisory-style coarse "YYYY-MM-dd" format)
+	resp.Flags[DbLastAdvisoryDateKey] = time.Now().Format(AdvisoryDateFormat)
 
 	// update the resp flag with summary of found
 	if len(resp.Vulnerabilities) > 0 {
@@ -202,6 +214,7 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 					Description: advisoryDefinition.Metadata.Description,
 				},
 			}
+
 			for _, parsedRmpNvra := range advisoryDefinition.PackageList {
 				if !IsArchSupported(parsedRmpNvra.Arch) {
 					continue
@@ -254,6 +267,11 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 				}
 
 			}
+			log.WithFields(log.Fields{
+				"name": vulnerability.Name,
+				"packages": len(advisoryDefinition.PackageList),
+				"affected": len(vulnerability.Affected),
+			}).Info("Append vulnerability")
 			if len(vulnerability.Affected) > 0 {
 				vulnerabilities = append(vulnerabilities, vulnerability)
 			}
@@ -471,15 +489,36 @@ func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) 
 // GetPackageList - get the package list associated with the given criteria
 func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvras []ParsedRmpNvra) {
 	criterions := extractAllCriterions(criteria)
+	var duplicatePackageCount int = 0
 	for _, criterion := range criterions {
 		// get package info
 		parsedRpmNvra := FindPackageNvraInfo(criterion.TestRef, ovalDoc)
 		// only include parsed nvra data if non-empty
 		if (parsedRpmNvra.Evr != "") {
-			parsedNvras = append(parsedNvras, parsedRpmNvra)
+			// make sure parsedNvras doesn't already contain parsedRpmNvra
+			if (!ParsedNvrasContains(parsedNvras, parsedRpmNvra)) {
+				// new/unique, add it
+				parsedNvras = append(parsedNvras, parsedRpmNvra)
+			} else {
+				duplicatePackageCount++
+			}
 		}
 	}
+	// debug
+	if (duplicatePackageCount>0) {
+		log.Info(fmt.Sprintf("skipped duplicate packages: %d", duplicatePackageCount))
+	}
 	return
+}
+
+// ParsedNvrasContains - determine whether the given parsedNvras slice already contains the given nvra
+func ParsedNvrasContains(parsedNvras []ParsedRmpNvra, nvra ParsedRmpNvra) bool {
+    for _, parsedNvra := range parsedNvras {
+        if parsedNvra == nvra {
+            return true
+        }
+    }
+    return false
 }
 
 // FindPackageNvraInfo - get nvra info for the given test ref

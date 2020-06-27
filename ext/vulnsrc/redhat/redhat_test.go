@@ -453,6 +453,79 @@ func TestGetSeverity(t *testing.T) {
 	}
 }
 
+func TestParsedNvrasContains(t *testing.T) {
+	type args struct {
+		parsedNvras []ParsedRmpNvra
+		nvra ParsedRmpNvra
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"1", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+			true,
+		},
+		{"2", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch2"}},
+			false,
+		},
+		{"3", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch2"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch3"},
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+			true},
+		{"4", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name2", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name3", Evr:"evr1", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name2", Evr:"evr1", Arch:"arch1"}},
+			true},
+		{"5", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"}},
+			true},
+		{"6", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr4", Arch:"arch1"}},
+			false},
+		{"7", args{[]ParsedRmpNvra{
+				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
+				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
+			},
+			ParsedRmpNvra{Name:"name2", Evr:"evr2", Arch:"arch1"}},
+			false},
+		{"8", args{[]ParsedRmpNvra{
+			},
+			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+			false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// debug
+			log.Info(fmt.Sprintf("ParsedNvrasContains(%s, %s)", tt.args.parsedNvras, tt.args.nvra))
+			if got := ParsedNvrasContains(tt.args.parsedNvras, tt.args.nvra); got != tt.want {
+				t.Errorf("ParsedNvrasContains(%v, %v) = %v, want %v", tt.args.parsedNvras, tt.args.nvra, got, tt.want)
+			}
+		})
+	}
+}
+
 type mockDatastore struct {
 	database.MockDatastore
 
