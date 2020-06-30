@@ -109,11 +109,11 @@ func TestIsRelevantCriterion(t *testing.T) {
 		args args
 		want bool
 	}{
-		{"1", args{OvalV2Criterion{Comment:"softhsm-devel is earlier than 0:2.4.0-2.module+el8.1.0+4098+f286395e"}}, true},
-		{"2", args{OvalV2Criterion{Comment:"Red Hat Enterprise Linux must be installed"}}, false},
-		{"3", args{OvalV2Criterion{Comment:"Module idm:DL1 is enabled"}}, false},
-		{"4", args{OvalV2Criterion{Comment:"softhsm-devel is signed with Red Hat redhatrelease2 key"}}, false},
-		{"5", args{OvalV2Criterion{Comment:""}}, false},
+		{"1", args{OvalV2Criterion{Comment: "softhsm-devel is earlier than 0:2.4.0-2.module+el8.1.0+4098+f286395e"}}, true},
+		{"2", args{OvalV2Criterion{Comment: "Red Hat Enterprise Linux must be installed"}}, false},
+		{"3", args{OvalV2Criterion{Comment: "Module idm:DL1 is enabled"}}, false},
+		{"4", args{OvalV2Criterion{Comment: "softhsm-devel is signed with Red Hat redhatrelease2 key"}}, false},
+		{"5", args{OvalV2Criterion{Comment: ""}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,6 +147,11 @@ func TestIsSupportedDefinitionType(t *testing.T) {
 			log.Info(fmt.Sprintf("IsSupportedDefinitionType(%s)", tt.args.arch))
 			if got := IsSupportedDefinitionType(tt.args.arch); got != tt.want {
 				t.Errorf("IsSupportedDefinitionType(%v) = %v, want %v", tt.args.arch, got, tt.want)
+			}
+			// debug
+			log.Info(fmt.Sprintf("!IsSupportedDefinitionType(%s)", tt.args.arch))
+			if got := !IsSupportedDefinitionType(tt.args.arch); got != !tt.want {
+				t.Errorf("!IsSupportedDefinitionType(%v) = %v, want %v", tt.args.arch, got, !tt.want)
 			}
 		})
 	}
@@ -372,36 +377,36 @@ func TestIsSignificantSeverity(t *testing.T) {
 		args args
 		want bool
 	}{
-		{"None", args{"None"},false},
-		{"Low", args{"Low"},true},
-		{"Moderate", args{"Moderate"},true},
-		{"Important", args{"Important"},true},
-		{"Critical", args{"Critical"},true},
-		{"Unknown", args{"Unknown"},true},
+		{"None", args{"None"}, false},
+		{"Low", args{"Low"}, true},
+		{"Moderate", args{"Moderate"}, true},
+		{"Important", args{"Important"}, true},
+		{"Critical", args{"Critical"}, true},
+		{"Unknown", args{"Unknown"}, true},
 	}
-	for _, tt := range tests {	
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsSignificantSeverity(tt.args.severity); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(tt.args.severity), 
-					got, 
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v",
+					tt.args.severity,
+					strings.Title(tt.args.severity),
+					got,
 					tt.want)
 			}
 			// test as all uppercase
 			if got := IsSignificantSeverity(strings.ToUpper(tt.args.severity)); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					strings.ToUpper(tt.args.severity), 
-					strings.Title(strings.ToUpper(tt.args.severity)), 
-					got, 
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v",
+					strings.ToUpper(tt.args.severity),
+					strings.Title(strings.ToUpper(tt.args.severity)),
+					got,
 					tt.want)
 			}
 			// test as all lowercase
 			if got := IsSignificantSeverity(strings.ToLower(tt.args.severity)); got != tt.want {
-				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v", 
-					strings.ToLower(tt.args.severity), 
-					strings.Title(strings.ToLower(tt.args.severity)), 
-					got, 
+				t.Errorf("IsSignificantSeverity(%s->%s) = %v, want %v",
+					strings.ToLower(tt.args.severity),
+					strings.Title(strings.ToLower(tt.args.severity)),
+					got,
 					tt.want)
 			}
 		})
@@ -417,36 +422,36 @@ func TestGetSeverity(t *testing.T) {
 		args args
 		want database.Severity
 	}{
-		{"None", args{"None"},database.NegligibleSeverity},
-		{"Low", args{"Low"},database.LowSeverity},
-		{"Moderate", args{"Moderate"},database.MediumSeverity},
-		{"Important", args{"Important"},database.HighSeverity},
-		{"Critical", args{"Critical"},database.CriticalSeverity},
-		{"Unknown", args{"Unknown"},database.UnknownSeverity},
+		{"None", args{"None"}, database.NegligibleSeverity},
+		{"Low", args{"Low"}, database.LowSeverity},
+		{"Moderate", args{"Moderate"}, database.MediumSeverity},
+		{"Important", args{"Important"}, database.HighSeverity},
+		{"Critical", args{"Critical"}, database.CriticalSeverity},
+		{"Unknown", args{"Unknown"}, database.UnknownSeverity},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(tt.args.severity), 
-					got, 
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v",
+					tt.args.severity,
+					strings.Title(tt.args.severity),
+					got,
 					tt.want)
 			}
 			// test as all uppercase
 			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(strings.ToUpper(tt.args.severity)), 
-					got, 
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v",
+					tt.args.severity,
+					strings.Title(strings.ToUpper(tt.args.severity)),
+					got,
 					tt.want)
 			}
 			// test as all lowercase
 			if got := GetSeverity(tt.args.severity); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetSeverity(%s->%s) = %v, want %v", 
-					tt.args.severity, 
-					strings.Title(strings.ToLower(tt.args.severity)), 
-					got, 
+				t.Errorf("GetSeverity(%s->%s) = %v, want %v",
+					tt.args.severity,
+					strings.Title(strings.ToLower(tt.args.severity)),
+					got,
 					tt.want)
 			}
 		})
@@ -456,7 +461,7 @@ func TestGetSeverity(t *testing.T) {
 func TestParsedNvrasContains(t *testing.T) {
 	type args struct {
 		parsedNvras []ParsedRmpNvra
-		nvra ParsedRmpNvra
+		nvra        ParsedRmpNvra
 	}
 	tests := []struct {
 		name string
@@ -464,55 +469,54 @@ func TestParsedNvrasContains(t *testing.T) {
 		want bool
 	}{
 		{"1", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"}},
 			true,
 		},
 		{"2", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch2"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch2"}},
 			false,
 		},
 		{"3", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch2"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch3"},
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch2"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch3"},
+		},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"}},
 			true},
 		{"4", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name2", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name3", Evr:"evr1", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name2", Evr:"evr1", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name2", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name3", Evr: "evr1", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name2", Evr: "evr1", Arch: "arch1"}},
 			true},
 		{"5", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr2", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr3", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name1", Evr: "evr3", Arch: "arch1"}},
 			true},
 		{"6", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr4", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr2", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr3", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name1", Evr: "evr4", Arch: "arch1"}},
 			false},
 		{"7", args{[]ParsedRmpNvra{
-				ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr2", Arch:"arch1"},
-				ParsedRmpNvra{Name:"name1", Evr:"evr3", Arch:"arch1"},
-			},
-			ParsedRmpNvra{Name:"name2", Evr:"evr2", Arch:"arch1"}},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr2", Arch: "arch1"},
+			ParsedRmpNvra{Name: "name1", Evr: "evr3", Arch: "arch1"},
+		},
+			ParsedRmpNvra{Name: "name2", Evr: "evr2", Arch: "arch1"}},
 			false},
-		{"8", args{[]ParsedRmpNvra{
-			},
-			ParsedRmpNvra{Name:"name1", Evr:"evr1", Arch:"arch1"}},
+		{"8", args{[]ParsedRmpNvra{},
+			ParsedRmpNvra{Name: "name1", Evr: "evr1", Arch: "arch1"}},
 			false},
 	}
 	for _, tt := range tests {
@@ -521,6 +525,53 @@ func TestParsedNvrasContains(t *testing.T) {
 			log.Info(fmt.Sprintf("ParsedNvrasContains(%s, %s)", tt.args.parsedNvras, tt.args.nvra))
 			if got := ParsedNvrasContains(tt.args.parsedNvras, tt.args.nvra); got != tt.want {
 				t.Errorf("ParsedNvrasContains(%v, %v) = %v, want %v", tt.args.parsedNvras, tt.args.nvra, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRhsaName(t *testing.T) {
+	type args struct {
+		advisoryDefinition ParsedAdvisory
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			"1",
+			args{
+				ParsedAdvisory{Metadata: OvalV2Metadata{Title: "RHSA-2013:0149: flash-plugin security update (Critical)", Reference: []OvalV2Reference{{RefID: "RHSA-2013:0149"}}}},
+			},
+			"RHSA-2013:0149",
+		},
+		{
+			"2",
+			args{
+				ParsedAdvisory{Metadata: OvalV2Metadata{Title: "RHSA-2013:0149: flash-plugin security update (Critical)", Reference: []OvalV2Reference{{RefID: ""}}}},
+			},
+			"RHSA-2013:0149",
+		},
+		{
+			"3",
+			args{
+				ParsedAdvisory{Metadata: OvalV2Metadata{Title: "RHSA-2013:0149: flash-plugin security update (Critical)", Reference: []OvalV2Reference{}}},
+			},
+			"RHSA-2013:0149",
+		},
+		{
+			"4",
+			args{
+				ParsedAdvisory{Metadata: OvalV2Metadata{Title: "", Reference: []OvalV2Reference{{RefID: ""}}}},
+			},
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ParseRhsaName(tt.args.advisoryDefinition); got != tt.want {
+				t.Errorf("ParseRhsaName() = %v, want %v", got, tt.want)
 			}
 		})
 	}

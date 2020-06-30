@@ -103,7 +103,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 	// walk the set of pulpManifestEntries
 	for _, manifestEntry := range pulpManifestEntries {
-		log.Info(fmt.Sprintf("Processing manifest entry (BzipPath: %s)",  manifestEntry.BzipPath))
+		log.Debug(fmt.Sprintf("Processing manifest entry (BzipPath: %s)",  manifestEntry.BzipPath))
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
 			unprocessedAdvisories := []ParsedAdvisory{}
@@ -129,7 +129,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				log.Error(err)
 				continue
 			}
-			log.Info(fmt.Sprintf("Processing %d definitions...", len(ovalDoc.DefinitionSet.Definitions)))
+			log.Debug(fmt.Sprintf("Processing %d definitions...", len(ovalDoc.DefinitionSet.Definitions)))
 
 			unprocessedAdvisories, err = GatherUnprocessedAdvisories(manifestEntry, ovalDoc, datastore)
 			if err != nil {
@@ -138,16 +138,16 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				continue
 			}
 			if len(unprocessedAdvisories) < 1 {
-				log.Info("Successful update, no unprocessed advisories found.")
+				log.Debug("Successful update, no unprocessed advisories found.")
 				continue
 			} else {
-				log.Info(fmt.Sprintf("Successful update, found %d unprocessed advisories.", len(unprocessedAdvisories)))
+				log.Debug(fmt.Sprintf("Successful update, found %d unprocessed advisories.", len(unprocessedAdvisories)))
 			}
 
 			log.WithFields(log.Fields{
 				"items":   len(unprocessedAdvisories),
 				"updater": "RedHat",
-			}).Info("Start parsing advisories for vulnerabilities")
+			}).Debug("Start parsing advisories for vulnerabilities")
 
 			collectedVulnerabilities := CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
 			log.WithFields(log.Fields{
@@ -167,14 +167,14 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			log.Trace(fmt.Sprintf("continuing next loop..."))
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
-			log.Info("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
+			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
 			continue
 		}
 
 	}
 
 	// debug
-	log.Info(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
+	log.Debug(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
 	// update the db key/value entry for the updater-last-ran date (current timestamp, using "YYYY-MM-dd hh:mm:ss" format)
 	resp.Flags[UpdaterFlag] = time.Now().Format(UpdaterFlagDateFormat)
 	// update the db key/value entry for the advisory-last-checked-on date (current timestamp, using advisory-style coarse "YYYY-MM-dd" format)
@@ -182,9 +182,9 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 
 	// update the resp flag with summary of found
 	if len(resp.Vulnerabilities) > 0 {
-		log.WithField("package", "Red Hat").Debug(fmt.Sprintf("updating (found: %d vulnerabilities)...", len(resp.Vulnerabilities)))
+		log.WithField("package", "Red Hat").Info(fmt.Sprintf("updating (found: %d vulnerabilities)...", len(resp.Vulnerabilities)))
 	} else {
-		log.WithField("package", "Red Hat").Debug("no update")
+		log.WithField("package", "Red Hat").Info("no update")
 	}
 
 	return resp, nil
@@ -214,7 +214,7 @@ func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2
 // CollectVulnsForAdvisory - get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
 func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// first, check the advisory severity
-	if (IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity)) {
+	if (IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class)) {
 		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
 			// first, make sure the pending vulnerabilities set doesn't already have this vulnerability def (since they can appear in multiple manifest entries)
 			if (pendingVulnNames[cve.Value + " - " + ParseRhsaName(advisoryDefinition)]) {
@@ -298,9 +298,10 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 		}
 	} else {
 		// advisories with severity "None" should be skipped
-		log.Trace(fmt.Sprintf("Skipping unsupported severity '%s' for advisory: %s",
+		log.Trace(fmt.Sprintf("Skipping unsupported advisory: %s (severity '%s', class: '%s')",
+			advisoryDefinition.Metadata.Title,
 			advisoryDefinition.Metadata.Advisory.Severity,
-			advisoryDefinition.Metadata.Title))
+			advisoryDefinition.Class))
 	}
 	return
 }
@@ -328,7 +329,14 @@ func ParseCveNames(advisoryDefinition ParsedAdvisory) []string {
 
 // ParseRhsaName - parse the RHSA name (e.g.: "RHBA-2019:2794") from the given advisory definition
 func ParseRhsaName(advisoryDefinition ParsedAdvisory) string {
-	return strings.TrimSpace(advisoryDefinition.Metadata.Title[:strings.Index(advisoryDefinition.Metadata.Title, ": ")])
+	var parsedName string
+	if (len(advisoryDefinition.Metadata.Reference)>0) {
+		parsedName = advisoryDefinition.Metadata.Reference[0].RefID
+	}
+	if (parsedName == "" && strings.Contains(advisoryDefinition.Metadata.Title, ": ")) {
+		parsedName = strings.TrimSpace(advisoryDefinition.Metadata.Title[:strings.Index(advisoryDefinition.Metadata.Title, ": ")])
+	}
+	return parsedName
 }
 
 // ParseVulnerabilityNamespace - parse the namespace from the given advisory definition
@@ -455,13 +463,19 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 		// check whether this is a supported definition type
 		if (!IsSupportedDefinitionType(definition.Class)) {
 			// not supported; skip it
+			log.Trace(fmt.Sprintf("Skipping unsupported definition (id: %s, class: %s)",
+				definition.ID,
+				definition.Class))
 			continue
 		}
+		log.Trace(fmt.Sprintf("Processing definition (id: %s, class: %s)",
+			definition.ID,
+			definition.Class))
 		// check if this entry has already been processed (based on its issued date)
 		if IsAdvisorySinceDate(sinceDate, definition.Metadata.Advisory.Issued.Date) {
 			// this advisory was issued since the last advisory date in the database; add it
 			// debug
-			log.Debug(fmt.Sprintf("Found advisory issued since the last known advisory date (%s) in database: %s (%s)",
+			log.Trace(fmt.Sprintf("Found advisory issued since the last known advisory date (%s) in database: %s (%s)",
 				sinceDate,
 				definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 			advisories = append(advisories, ParseAdvisory(definition, ovalDoc))
@@ -473,7 +487,7 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 			if (!DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore)) {
 				// this advisory id/version hasn't been processed yet; add it
 				// debug
-				log.Debug(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)",
+				log.Trace(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)",
 					sinceDate,
 					definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 				advisories = append(advisories, parsedAdvisory)
@@ -481,14 +495,14 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 		} else {
 			// this advisory was issued before the last advisory date in the database, so already processed; skip it
 			// debug
-			log.Debug(fmt.Sprintf("Skipping advisory issued before the last known advisory date (%s) in database: %s (%s)",
+			log.Trace(fmt.Sprintf("Skipping advisory issued before the last known advisory date (%s) in database: %s (%s)",
 				sinceDate,
 				definition.Metadata.Title, definition.Metadata.Advisory.Issued.Date))
 		}
 	}
 	// debug-only info
 	out, _ := xml.MarshalIndent(ovalDoc, " ", "  ")
-	log.Debug(string(out))
+	log.Trace(string(out))
 
 	return advisories, nil
 }

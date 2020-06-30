@@ -59,8 +59,16 @@ type OvalV2AdvisoryDefinition struct {
 // OvalV2Metadata - advisory metadata
 type OvalV2Metadata struct {
 	Title            string            `xml:"title"`
+	Reference        []OvalV2Reference `xml:"reference"`
 	Description      string            `xml:"description"`
 	Advisory         OvalV2Advisory    `xml:"advisory"`
+}
+
+// OvalV2Reference - advisory reference
+type OvalV2Reference struct {
+	RefID            string            `xml:"ref_id"`
+	RefURL           string            `xml:"ref_url"`
+	Source           string            `xml:"source"`
 }
 
 // OvalV2Advisory - advisory data
