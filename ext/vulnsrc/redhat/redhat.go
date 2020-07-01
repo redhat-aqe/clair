@@ -31,32 +31,32 @@ import (
 	"github.com/quay/clair/v3/database"
 	"github.com/quay/clair/v3/ext/versionfmt/modulerpm"
 	"github.com/quay/clair/v3/ext/versionfmt/rpm"
+	"github.com/quay/clair/v3/ext/vulnsrc"
 	"github.com/quay/clair/v3/pkg/commonerr"
 	"github.com/quay/clair/v3/pkg/envutil"
 	"github.com/quay/clair/v3/pkg/httputil"
-	"github.com/quay/clair/v3/ext/vulnsrc"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
 	// PulpManifest - url suffix for pulp manifest file
-	PulpManifest             = "PULP_MANIFEST"
+	PulpManifest = "PULP_MANIFEST"
 	// DbManifestEntryKeyPrefix - key prefix used to create flag for manifest entry hash key/value
 	DbManifestEntryKeyPrefix = "oval.v2.pulp.manifest.entry."
 	// DbLastAdvisoryDateKey - key prefix used to create flag for last advisory date key/value
-	DbLastAdvisoryDateKey    = "oval.v2.advisory.date.issued"
+	DbLastAdvisoryDateKey = "oval.v2.advisory.date.issued"
 	// DefaultLastAdvisoryDate - literal date (in case no existing last advisory date is found)
-	DefaultLastAdvisoryDate  = "1970-01-01"
+	DefaultLastAdvisoryDate = "1970-01-01"
 	// AdvisoryDateFormat date format for advisory dates ('magical reference date' for datetime format)
-	AdvisoryDateFormat       = "2006-01-02"
+	AdvisoryDateFormat = "2006-01-02"
 	// UpdaterFlag - key used for flag for updater
-	UpdaterFlag              = "redHatUpdater"
+	UpdaterFlag = "redHatUpdater"
 	// UpdaterFlagDateFormat - date format for updater flag dates ('magical reference date' for datetime format)
-	UpdaterFlagDateFormat    = "2006-01-02 15:04:05"
+	UpdaterFlagDateFormat = "2006-01-02 15:04:05"
 	// AffectedType - affected type
-	AffectedType             = database.BinaryPackage
+	AffectedType = database.BinaryPackage
 	// CveURL - url for cve content
-	CveURL                   = "https://access.redhat.com/security/cve/"
+	CveURL = "https://access.redhat.com/security/cve/"
 )
 
 // OvalV2BaseURL - base url for oval v2 content
@@ -66,13 +66,13 @@ var OvalV2BaseURL = envutil.GetEnv("OVAL_V2_URL", "https://www.redhat.com/securi
 var LogLevel = envutil.GetEnv("REDHAT_OVAL_V2_LOG_LEVEL", "info")
 
 // SupportedArches - supported architectures
-var SupportedArches = map[string]bool { "x86_64":true, "noarch":true }
+var SupportedArches = map[string]bool{"x86_64": true, "noarch": true}
 
 // SupportedDefinitionTypes - supported definition classes
-var SupportedDefinitionTypes = map[string]bool { "patch":true }
+var SupportedDefinitionTypes = map[string]bool{"patch": true}
 
 // pendingVulnNames - quick running reference (by name) of all the vulnerabilities which have been added to the pending list
-var pendingVulnNames = map[string]bool {}
+var pendingVulnNames = map[string]bool{}
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
@@ -96,14 +96,14 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	log.Info("Found pulp manifest: " + pulpManifestBody)
 	pulpManifestEntries := ParsePulpManifest(pulpManifestBody)
 
-	log.Info(fmt.Sprintf("Processing %d pulp manifest entries",  len(pulpManifestEntries)))
+	log.Info(fmt.Sprintf("Processing %d pulp manifest entries", len(pulpManifestEntries)))
 
 	// initialize updater flags map
 	resp.Flags = make(map[string]string)
 
 	// walk the set of pulpManifestEntries
 	for _, manifestEntry := range pulpManifestEntries {
-		log.Debug(fmt.Sprintf("Processing manifest entry (BzipPath: %s)",  manifestEntry.BzipPath))
+		log.Debug(fmt.Sprintf("Processing manifest entry (BzipPath: %s)", manifestEntry.BzipPath))
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
 			unprocessedAdvisories := []ParsedAdvisory{}
@@ -117,7 +117,7 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				log.Error(err)
 				continue
 			}
-			if (ovalXML == "") {
+			if ovalXML == "" {
 				log.Error("Cannot parse empty source oval doc")
 				continue
 			}
@@ -152,8 +152,8 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 			collectedVulnerabilities := CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
 			log.WithFields(log.Fields{
 				"collectedVulns": len(collectedVulnerabilities),
-				"pendingVulns": len(resp.Vulnerabilities),
-				"manifestEntry": manifestEntry.BzipPath,
+				"pendingVulns":   len(resp.Vulnerabilities),
+				"manifestEntry":  manifestEntry.BzipPath,
 			}).Info("Append parsed vulnerabilities to pending set")
 
 			resp.Vulnerabilities = append(resp.Vulnerabilities, collectedVulnerabilities...)
@@ -214,13 +214,13 @@ func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2
 // CollectVulnsForAdvisory - get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
 func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// first, check the advisory severity
-	if (IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class)) {
+	if IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class) {
 		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
 			// first, make sure the pending vulnerabilities set doesn't already have this vulnerability def (since they can appear in multiple manifest entries)
-			if (pendingVulnNames[cve.Value + " - " + ParseRhsaName(advisoryDefinition)]) {
+			if pendingVulnNames[cve.Value+" - "+ParseRhsaName(advisoryDefinition)] {
 				// this vuln has already been added to the set, so skip so we don't end up with duplicates
 				log.Trace(fmt.Sprintf("Skipping already-queued vulnerability: %s",
-					cve.Value + " - " + ParseRhsaName(advisoryDefinition)))
+					cve.Value+" - "+ParseRhsaName(advisoryDefinition)))
 				continue
 			}
 			packageMap := make(map[string]bool)
@@ -286,7 +286,7 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 
 			}
 			log.WithFields(log.Fields{
-				"name": vulnerability.Name,
+				"name":     vulnerability.Name,
 				"packages": len(advisoryDefinition.PackageList),
 				"affected": len(vulnerability.Affected),
 			}).Trace("Append vulnerability")
@@ -330,10 +330,10 @@ func ParseCveNames(advisoryDefinition ParsedAdvisory) []string {
 // ParseRhsaName - parse the RHSA name (e.g.: "RHBA-2019:2794") from the given advisory definition
 func ParseRhsaName(advisoryDefinition ParsedAdvisory) string {
 	var parsedName string
-	if (len(advisoryDefinition.Metadata.Reference)>0) {
+	if len(advisoryDefinition.Metadata.Reference) > 0 {
 		parsedName = advisoryDefinition.Metadata.Reference[0].RefID
 	}
-	if (parsedName == "" && strings.Contains(advisoryDefinition.Metadata.Title, ": ")) {
+	if parsedName == "" && strings.Contains(advisoryDefinition.Metadata.Title, ": ") {
 		parsedName = strings.TrimSpace(advisoryDefinition.Metadata.Title[:strings.Index(advisoryDefinition.Metadata.Title, ": ")])
 	}
 	return parsedName
@@ -385,8 +385,8 @@ func GetSeverity(severity string) database.Severity {
 // IsSignificantSeverity - checks whether the given severity is significant (used to determine whether vulns will be parsed and stored for it)
 func IsSignificantSeverity(severity string) bool {
 	switch strings.Title(strings.ToLower(severity)) {
-		case "None":
-			return false
+	case "None":
+		return false
 	default:
 		// anything else is considered significant
 		return true
@@ -394,18 +394,18 @@ func IsSignificantSeverity(severity string) bool {
 }
 
 func extractAllCriterions(criteria OvalV2Criteria) []OvalV2Criterion {
-    var criterions []OvalV2Criterion
-    for _, criterion := range criteria.Criteria {
-        // recursively append criteria contents
-        criterions = append(criterions, extractAllCriterions(criterion)...)
-    }
-    for _, criterion := range criteria.Criterion {
-		if (IsRelevantCriterion(criterion)) {
+	var criterions []OvalV2Criterion
+	for _, criterion := range criteria.Criteria {
+		// recursively append criteria contents
+		criterions = append(criterions, extractAllCriterions(criterion)...)
+	}
+	for _, criterion := range criteria.Criterion {
+		if IsRelevantCriterion(criterion) {
 			// append criterion
 			criterions = append(criterions, criterion)
 		}
-    }
-    return criterions
+	}
+	return criterions
 }
 
 // IsRelevantCriterion - check whether the given criterion is relevant
@@ -421,7 +421,7 @@ func IsRelevantCriterion(criterion OvalV2Criterion) bool {
 // IsArchSupported - check whether the given architecture regex represents a supported arch
 func IsArchSupported(archRegex string) bool {
 	// treat empty arch package info as noarch
-	if (archRegex == "") {
+	if archRegex == "" {
 		return SupportedArches["noarch"]
 	}
 	// arch values may be simple strings (e.g.: "x86_64") or regex pattern-based (e.g.: "aarch64|ppc64le|s390x|x86_64")
@@ -429,7 +429,7 @@ func IsArchSupported(archRegex string) bool {
 	// walk the supported arches map, to see if there's a match to the regex
 	for archName, isSupported := range SupportedArches {
 		isMatch := archMatcher.MatchString(archName)
-		if (isMatch && isSupported) {
+		if isMatch && isSupported {
 			return true
 		}
 	}
@@ -461,7 +461,7 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 	var advisories []ParsedAdvisory
 	for _, definition := range ovalDoc.DefinitionSet.Definitions {
 		// check whether this is a supported definition type
-		if (!IsSupportedDefinitionType(definition.Class)) {
+		if !IsSupportedDefinitionType(definition.Class) {
 			// not supported; skip it
 			log.Trace(fmt.Sprintf("Skipping unsupported definition (id: %s, class: %s)",
 				definition.ID,
@@ -484,7 +484,7 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 			// advisory date is coarse (YYYY-MM-dd format) date only,
 			// so it's possible that we'll see an advisory multiple times within the same day;
 			// check the db in this case to be sure
-			if (!DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore)) {
+			if !DbLookupIsAdvisoryProcessed(parsedAdvisory, datastore) {
 				// this advisory id/version hasn't been processed yet; add it
 				// debug
 				log.Trace(fmt.Sprintf("Found unprocessed advisory issued on the last known advisory date (%s) in database: %s (%s)",
@@ -508,13 +508,13 @@ func ProcessAdvisoriesSinceLastDbUpdate(ovalDoc OvalV2Document, datastore databa
 }
 
 // ParseAdvisory - parse the given advisory definition
-func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) (ParsedAdvisory) {
+func ParseAdvisory(definition OvalV2AdvisoryDefinition, ovalDoc OvalV2Document) ParsedAdvisory {
 	parsedAdvisory := ParsedAdvisory{
-		Class: definition.Class,
-		ID: definition.ID,
-		Version: definition.Version,
-		Metadata: definition.Metadata,
-		Criteria: definition.Criteria,
+		Class:       definition.Class,
+		ID:          definition.ID,
+		Version:     definition.Version,
+		Metadata:    definition.Metadata,
+		Criteria:    definition.Criteria,
 		PackageList: GetPackageList(definition.Criteria, ovalDoc),
 	}
 	return parsedAdvisory
@@ -528,9 +528,9 @@ func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvra
 		// get package info
 		parsedRpmNvra := FindPackageNvraInfo(criterion.TestRef, ovalDoc)
 		// only include parsed nvra data if non-empty
-		if (parsedRpmNvra.Evr != "") {
+		if parsedRpmNvra.Evr != "" {
 			// make sure parsedNvras doesn't already contain parsedRpmNvra
-			if (!ParsedNvrasContains(parsedNvras, parsedRpmNvra)) {
+			if !ParsedNvrasContains(parsedNvras, parsedRpmNvra) {
 				// new/unique, add it
 				parsedNvras = append(parsedNvras, parsedRpmNvra)
 			} else {
@@ -539,7 +539,7 @@ func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvra
 		}
 	}
 	// debug
-	if (duplicatePackageCount>0) {
+	if duplicatePackageCount > 0 {
 		log.Debug(fmt.Sprintf("skipped duplicate packages: %d", duplicatePackageCount))
 	}
 	return
@@ -547,18 +547,18 @@ func GetPackageList(criteria OvalV2Criteria, ovalDoc OvalV2Document) (parsedNvra
 
 // ParsedNvrasContains - determine whether the given parsedNvras slice already contains the given nvra
 func ParsedNvrasContains(parsedNvras []ParsedRmpNvra, nvra ParsedRmpNvra) bool {
-    for _, parsedNvra := range parsedNvras {
-        if parsedNvra == nvra {
-            return true
-        }
-    }
-    return false
+	for _, parsedNvra := range parsedNvras {
+		if parsedNvra == nvra {
+			return true
+		}
+	}
+	return false
 }
 
 // FindPackageNvraInfo - get nvra info for the given test ref
 func FindPackageNvraInfo(testRefID string, ovalDoc OvalV2Document) ParsedRmpNvra {
 	var parsedNvra ParsedRmpNvra
-    for _, test := range ovalDoc.TestSet.Tests {
+	for _, test := range ovalDoc.TestSet.Tests {
 		if test.ID == testRefID {
 			for _, obj := range ovalDoc.ObjectSet.Objects {
 				if obj.ID == test.ObjectRef.Ref {
@@ -566,7 +566,7 @@ func FindPackageNvraInfo(testRefID string, ovalDoc OvalV2Document) ParsedRmpNvra
 				}
 			}
 			for _, state := range ovalDoc.StateSet.States {
-				if (state.ID == test.StateRef.Ref) {
+				if state.ID == test.StateRef.Ref {
 					parsedNvra.Evr = state.Evr.Value
 					parsedNvra.Arch = state.Arch.Value
 				}
@@ -582,14 +582,14 @@ func IsAdvisorySinceDate(sinceDate string, advisoryDate string) bool {
 		sinceDate = DefaultLastAdvisoryDate
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
-    if err != nil {
+	if err != nil {
 		log.Error("error parsing since date string: " + sinceDate)
 		// if unable to parse date, treat as new advisory
 		return true
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
-    if err != nil {
-        log.Error("error parsing advisory date string: " + advisoryDate)
+	if err != nil {
+		log.Error("error parsing advisory date string: " + advisoryDate)
 		// if unable to parse date, treat as new advisory
 		return true
 	}
@@ -602,14 +602,14 @@ func IsAdvisorySameDate(sinceDate string, advisoryDate string) bool {
 		sinceDate = DefaultLastAdvisoryDate
 	}
 	sinceTime, err := time.Parse(AdvisoryDateFormat, sinceDate)
-    if err != nil {
-        log.Error("error parsing since date string: " + sinceDate)
+	if err != nil {
+		log.Error("error parsing since date string: " + sinceDate)
 		// if unable to parse date, treat as not same
 		return false
 	}
 	advisoryTime, err := time.Parse(AdvisoryDateFormat, advisoryDate)
-    if err != nil {
-        log.Error("error parsing advisory date string: " + advisoryDate)
+	if err != nil {
+		log.Error("error parsing advisory date string: " + advisoryDate)
 		// if unable to parse date, treat as not same
 		return false
 	}
@@ -624,7 +624,7 @@ func DbLookupLastAdvisoryDate(datastore database.Datastore) string {
 		// error while fetching record, use default
 		return DefaultLastAdvisoryDate
 	}
-	if (ok == false || dbLastAdvisoryDate == "") {
+	if ok == false || dbLastAdvisoryDate == "" {
 		// no record found, use default
 		return DefaultLastAdvisoryDate
 	}
@@ -660,7 +660,7 @@ func ConstructFlagForManifestEntrySignature(manifestEntry ManifestEntry, datasto
 //   since the last time the manifest was processed
 func IsNewOrUpdatedManifestEntry(manifestEntry ManifestEntry, datastore database.Datastore) bool {
 	currentDbSignature, ok, err := database.FindKeyValueAndRollback(datastore,
-		DbManifestEntryKeyPrefix + manifestEntry.BzipPath)
+		DbManifestEntryKeyPrefix+manifestEntry.BzipPath)
 	if err != nil {
 		// log the error and err on the side of treat-as-new/updated
 		log.Error("Unable to fetch advisory signature from db, caused by: " + err.Error())
@@ -771,8 +771,8 @@ func ReadBzipOvalFile(bzipOvalFile string) (string, error) {
 }
 
 // ParseCriteriaForModuleNamespaces - parse one definition
-func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) ([]string) {
-    var moduleNamespaces []string
+func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) []string {
+	var moduleNamespaces []string
 	criterions := extractAllCriterions(criteria)
 	// walk the criteria and add them
 	for _, criterion := range criterions {
@@ -783,6 +783,5 @@ func ParseCriteriaForModuleNamespaces(criteria OvalV2Criteria) ([]string) {
 			moduleNamespaces = append(moduleNamespaces, matches[2])
 		}
 	}
-    return moduleNamespaces
+	return moduleNamespaces
 }
-
