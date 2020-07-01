@@ -110,8 +110,8 @@ func TestIsRelevantCriterion(t *testing.T) {
 		want bool
 	}{
 		{"1", args{OvalV2Criterion{Comment: "softhsm-devel is earlier than 0:2.4.0-2.module+el8.1.0+4098+f286395e"}}, true},
-		{"2", args{OvalV2Criterion{Comment: "Red Hat Enterprise Linux must be installed"}}, false},
-		{"3", args{OvalV2Criterion{Comment: "Module idm:DL1 is enabled"}}, false},
+		{"2", args{OvalV2Criterion{Comment: "Module idm:DL1 is enabled"}}, true},
+		{"3", args{OvalV2Criterion{Comment: "Red Hat Enterprise Linux must be installed"}}, false},
 		{"4", args{OvalV2Criterion{Comment: "softhsm-devel is signed with Red Hat redhatrelease2 key"}}, false},
 		{"5", args{OvalV2Criterion{Comment: ""}}, false},
 	}
