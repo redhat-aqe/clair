@@ -413,6 +413,8 @@ func IsRelevantCriterion(criterion OvalV2Criterion) bool {
 	// check comment for matching "is earlier than" substring
 	if strings.Contains(criterion.Comment, "is earlier than") {
 		return true
+	} else if strings.HasPrefix(criterion.Comment, "Module ") && strings.HasSuffix(criterion.Comment, " is enabled") {
+		return true
 	}
 	// nothing matched
 	return false
@@ -445,7 +447,7 @@ func IsSupportedDefinitionType(defClass string) bool {
 // ParseCpeNamesFromAffectedCpeList - parse affected_cpe_list
 func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, error) {
 	var cpeNames []string
-	if affectedCpeList.Cpe == nil || len(affectedCpeList.Cpe) < 1 {
+	if affectedCpeList.Cpe == nil {
 		return cpeNames, errors.New("unparseable affected cpe list")
 	}
 	// return all cpe entries from the list
