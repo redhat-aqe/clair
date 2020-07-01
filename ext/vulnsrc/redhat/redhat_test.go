@@ -658,4 +658,3 @@ func newmockDatastore() *mockDatastore {
 	}
 	return md
 }
-
