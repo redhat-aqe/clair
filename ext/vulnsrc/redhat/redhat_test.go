@@ -369,7 +369,7 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseCpeNamesFromAffectedCpeList(tt.args.affectedCpeList)
-			if (err != nil) {
+			if err != nil {
 				if (err != nil) != tt.wantErr {
 					t.Errorf("ParseCpeNamesFromAffectedCpeList() error = %v, wantErr %v", err, tt.wantErr)
 				}
@@ -638,12 +638,12 @@ func TestParseCriteriaForModuleNamespaces(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseCriteriaForModuleNamespaces(tt.args.criteria);
-			if (len(got)==0) {
-				if (len(tt.want)!=0) {
+			got := ParseCriteriaForModuleNamespaces(tt.args.criteria)
+			if len(got) == 0 {
+				if len(tt.want) != 0 {
 					t.Errorf("ParseCriteriaForModuleNamespaces() = %v, want %v", got, tt.want)
 				}
-			} else if (!reflect.DeepEqual(got, tt.want)) {
+			} else if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseCriteriaForModuleNamespaces() = %v, want %v", got, tt.want)
 			}
 		})
