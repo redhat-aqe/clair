@@ -452,7 +452,7 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 	}
 	// return all non-empty cpe entries from the list
 	for i := 0; i < len(affectedCpeList.Cpe); i++ {
-		if (affectedCpeList.Cpe[i] != "") {
+		if affectedCpeList.Cpe[i] != "" {
 			cpeNames = append(cpeNames, affectedCpeList.Cpe[i])
 		}
 	}
