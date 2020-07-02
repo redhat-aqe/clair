@@ -319,7 +319,7 @@ func TestReadBzipOvalFile(t *testing.T) {
 
 func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 	pwd, _ := os.Getwd()
-	xmlFilePath := pwd + "/testdata/v2/ansible-2.8.oval.xml"
+	xmlFilePath := pwd + "/testdata/v2/ansible-1.x.oval.xml"
 	xmlContent, err := ioutil.ReadFile(xmlFilePath)
 	if err != nil {
 		log.Fatal("error reading " + xmlFilePath)
@@ -341,24 +341,39 @@ func TestParseCpeNamesFromAffectedCpeList(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		// cpe:/a:redhat:ansible_engine:2.8::el8
 		{
-			"1",
+			"Two cpes",
 			args{ovalDoc.DefinitionSet.Definitions[0].Metadata.Advisory.AffectedCpeList},
 			[]string{
 				"cpe:/a:redhat:ansible_engine:2.8",
 				"cpe:/a:redhat:ansible_engine:2.8::el8",
-				// []CpeName{
-				// 	{Part: "a", Vendor: "redhat", Product: "ansible_engine", Version: "2.8", Update: "", Edition: "el8", Language: ""},
 			},
 			false,
+		},
+		{
+			"With one empty cpe",
+			args{ovalDoc.DefinitionSet.Definitions[1].Metadata.Advisory.AffectedCpeList},
+			[]string{
+				"cpe:/a:redhat:ansible_engine:2.8",
+				"cpe:/a:redhat:ansible_engine:2.8::el8",
+			},
+			false,
+		},
+		{
+			"No cpe (unparseable)",
+			args{ovalDoc.DefinitionSet.Definitions[2].Metadata.Advisory.AffectedCpeList},
+			[]string{},
+			true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ParseCpeNamesFromAffectedCpeList(tt.args.affectedCpeList)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ParseCpeNamesFromAffectedCpeList() error = %v, wantErr %v", err, tt.wantErr)
+			if (err != nil) {
+				if (err != nil) != tt.wantErr {
+					t.Errorf("ParseCpeNamesFromAffectedCpeList() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				// expected error, no need to continue
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
@@ -572,6 +587,64 @@ func TestParseRhsaName(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ParseRhsaName(tt.args.advisoryDefinition); got != tt.want {
 				t.Errorf("ParseRhsaName() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCriteriaForModuleNamespaces(t *testing.T) {
+	type args struct {
+		criteria OvalV2Criteria
+	}
+	tests := []struct {
+		name string
+		args args
+		want []string
+	}{
+		{
+			"One Module",
+			args{
+				OvalV2Criteria{Criterion: []OvalV2Criterion{{Comment: "Module nodejs:12 is enabled", TestRef: "oval:com.redhat.rhea:tst:20200330015"}}},
+			},
+			[]string{"nodejs:12"},
+		},
+		{
+			"Non-Module",
+			args{
+				OvalV2Criteria{Criterion: []OvalV2Criterion{{Comment: "vim-filesystem is earlier than vim-filesystem-2:7.4.629-2.el7.x86_64", TestRef: "oval:com.redhat.rhsa:tst:20162972001"}}},
+			},
+			[]string{},
+		},
+		{
+			"Three Modules",
+			args{
+				OvalV2Criteria{
+					Criterion: []OvalV2Criterion{
+						{Comment: "Module nodejs:12 is enabled", TestRef: "oval:com.redhat.rhea:tst:20200330015"},
+						{Comment: "Module idm:DL1 is enabled", TestRef: "oval:com.redhat.rhea:tst:20200330015"},
+						{Comment: "Module container-tools:rhel8 is enabled", TestRef: "oval:com.redhat.rhea:tst:20200330015"},
+					},
+				},
+			},
+			[]string{"nodejs:12", "idm:DL1", "container-tools:rhel8"},
+		},
+		{
+			"Empty Criteria",
+			args{
+				OvalV2Criteria{},
+			},
+			[]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseCriteriaForModuleNamespaces(tt.args.criteria);
+			if (len(got)==0) {
+				if (len(tt.want)!=0) {
+					t.Errorf("ParseCriteriaForModuleNamespaces() = %v, want %v", got, tt.want)
+				}
+			} else if (!reflect.DeepEqual(got, tt.want)) {
+				t.Errorf("ParseCriteriaForModuleNamespaces() = %v, want %v", got, tt.want)
 			}
 		})
 	}
