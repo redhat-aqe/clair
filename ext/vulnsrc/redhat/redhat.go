@@ -450,9 +450,11 @@ func ParseCpeNamesFromAffectedCpeList(affectedCpeList OvalV2Cpe) ([]string, erro
 	if affectedCpeList.Cpe == nil {
 		return cpeNames, errors.New("unparseable affected cpe list")
 	}
-	// return all cpe entries from the list
+	// return all non-empty cpe entries from the list
 	for i := 0; i < len(affectedCpeList.Cpe); i++ {
-		cpeNames = append(cpeNames, affectedCpeList.Cpe[i])
+		if (affectedCpeList.Cpe[i] != "") {
+			cpeNames = append(cpeNames, affectedCpeList.Cpe[i])
+		}
 	}
 	return cpeNames, nil
 }
