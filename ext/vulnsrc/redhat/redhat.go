@@ -62,9 +62,6 @@ const (
 // OvalV2BaseURL - base url for oval v2 content
 var OvalV2BaseURL = envutil.GetEnv("OVAL_V2_URL", "https://www.redhat.com/security/data/oval/v2/")
 
-// LogLevel - log level for oval v2 plugin
-var LogLevel = envutil.GetEnv("REDHAT_OVAL_V2_LOG_LEVEL", "info")
-
 // SupportedArches - supported architectures
 var SupportedArches = map[string]bool{"x86_64": true, "noarch": true}
 
@@ -76,11 +73,6 @@ var pendingVulnNames = map[string]bool{}
 
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
-	level, err := log.ParseLevel(LogLevel)
-	if err != nil {
-		level = log.InfoLevel
-	}
-	log.SetLevel(level)
 }
 
 func (u *updater) Clean() {}
