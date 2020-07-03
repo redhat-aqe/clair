@@ -650,6 +650,402 @@ func TestParseCriteriaForModuleNamespaces(t *testing.T) {
 	}
 }
 
+func TestVulnerabilityContainsFeature(t *testing.T) {
+	type args struct {
+		vulnerability     database.VulnerabilityWithAffected
+		comparisonFeature database.AffectedFeature
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{
+			"found in one feature",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "first-feature-name",
+							AffectedVersion: "v.0.0.1",
+							FixedInVersion:  "v.0.0.1",
+							FeatureType:     "first.feature.type",
+						},
+					},
+				},
+				database.AffectedFeature{
+					FeatureName:     "first-feature-name",
+					AffectedVersion: "v.0.0.1",
+					FixedInVersion:  "v.0.0.1",
+					FeatureType:     "first.feature.type",
+				},
+			},
+			true,
+		},
+		{
+			"not found in one feature",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "first-feature-name",
+							AffectedVersion: "v.0.0.1",
+							FixedInVersion:  "v.0.0.1",
+							FeatureType:     "first.feature.type",
+						},
+					},
+				},
+				database.AffectedFeature{
+					FeatureName:     "second-feature-name",
+					AffectedVersion: "v.0.0.2",
+					FixedInVersion:  "v.0.0.2",
+					FeatureType:     "second.feature.type",
+				},
+			},
+			false,
+		},
+		{
+			"found in three features",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "first-feature-name",
+							AffectedVersion: "v.0.0.1",
+							FixedInVersion:  "v.0.0.1",
+							FeatureType:     "first.feature.type",
+						},
+						{
+							FeatureName:     "second-feature-name",
+							AffectedVersion: "v.0.0.2",
+							FixedInVersion:  "v.0.0.2",
+							FeatureType:     "second.feature.type",
+						},
+						{
+							FeatureName:     "third-feature-name",
+							AffectedVersion: "v.0.0.3",
+							FixedInVersion:  "v.0.0.3",
+							FeatureType:     "third.feature.type",
+						},
+					},
+				},
+				database.AffectedFeature{
+					FeatureName:     "second-feature-name",
+					AffectedVersion: "v.0.0.2",
+					FixedInVersion:  "v.0.0.2",
+					FeatureType:     "second.feature.type",
+				},
+			},
+			true,
+		},
+		{
+			"not found in three features",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "first-feature-name",
+							AffectedVersion: "v.0.0.1",
+							FixedInVersion:  "v.0.0.1",
+							FeatureType:     "first.feature.type",
+						},
+						{
+							FeatureName:     "second-feature-name",
+							AffectedVersion: "v.0.0.2",
+							FixedInVersion:  "v.0.0.2",
+							FeatureType:     "second.feature.type",
+						},
+						{
+							FeatureName:     "third-feature-name",
+							AffectedVersion: "v.0.0.3",
+							FixedInVersion:  "v.0.0.3",
+							FeatureType:     "third.feature.type",
+						},
+					},
+				},
+				// imperfect match
+				database.AffectedFeature{
+					FeatureName:     "second-feature-name",
+					AffectedVersion: "v.0.0.4",
+					FixedInVersion:  "v.0.0.4",
+					FeatureType:     "second.feature.type",
+				},
+			},
+			false,
+		},
+		{
+			"not found in zero features",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{},
+				},
+				database.AffectedFeature{
+					FeatureName:     "first-feature-name",
+					AffectedVersion: "v.0.0.1",
+					FixedInVersion:  "v.0.0.1",
+					FeatureType:     "first.feature.type",
+				},
+			},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := VulnerabilityContainsFeature(tt.args.vulnerability, tt.args.comparisonFeature); got != tt.want {
+				t.Errorf("VulnerabilityContainsFeature() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetPendingVulnerabilitySliceIndex(t *testing.T) {
+	type args struct {
+		vulnSet    []database.VulnerabilityWithAffected
+		lookupVuln database.VulnerabilityWithAffected
+	}
+	tests := []struct {
+		name string
+		args args
+		want int
+	}{
+		{
+			"found among one vuln",
+			args{
+				[]database.VulnerabilityWithAffected{
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln one",
+						},
+					},
+				},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+				},
+			},
+			0,
+		},
+		{
+			"not found among one vuln",
+			args{
+				[]database.VulnerabilityWithAffected{
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln one",
+						},
+					},
+				},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln two",
+					},
+				},
+			},
+			-1,
+		},
+		{
+			"found among three vulns",
+			args{
+				[]database.VulnerabilityWithAffected{
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln one",
+						},
+					},
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln two",
+						},
+					},
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln three",
+						},
+					},
+				},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln two",
+					},
+				},
+			},
+			1,
+		},
+		{
+			"not found among three vulns",
+			args{
+				[]database.VulnerabilityWithAffected{
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln one",
+						},
+					},
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln two",
+						},
+					},
+					{
+						Vulnerability: database.Vulnerability{
+							Name: "vuln three",
+						},
+					},
+				},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln four",
+					},
+				},
+			},
+			-1,
+		},
+		{
+			"not found among zero vulns",
+			args{
+				[]database.VulnerabilityWithAffected{},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln four",
+					},
+				},
+			},
+			-1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := GetPendingVulnerabilitySliceIndex(tt.args.vulnSet, tt.args.lookupVuln); got != tt.want {
+				t.Errorf("GetPendingVulnerabilitySliceIndex() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeVulnerabilityFeature(t *testing.T) {
+	type args struct {
+		sourceVuln database.VulnerabilityWithAffected
+		targetVuln database.VulnerabilityWithAffected
+	}
+	tests := []struct {
+		name string
+		args args
+		want database.VulnerabilityWithAffected
+	}{
+		// TODO: Add test cases.
+
+		{
+			"one merged from two sets of three features",
+			args{
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "first-feature-name",
+							AffectedVersion: "v.0.0.1",
+							FixedInVersion:  "v.0.0.1",
+							FeatureType:     "first.feature.type",
+						},
+						{
+							FeatureName:     "second-feature-name",
+							AffectedVersion: "v.0.0.2",
+							FixedInVersion:  "v.0.0.2",
+							FeatureType:     "second.feature.type",
+						},
+						{
+							FeatureName:     "third-feature-name",
+							AffectedVersion: "v.0.0.3",
+							FixedInVersion:  "v.0.0.3",
+							FeatureType:     "third.feature.type",
+						},
+					},
+				},
+				database.VulnerabilityWithAffected{
+					Vulnerability: database.Vulnerability{
+						Name: "vuln one",
+					},
+					Affected: []database.AffectedFeature{
+						{
+							FeatureName:     "second-feature-name",
+							AffectedVersion: "v.0.0.2",
+							FixedInVersion:  "v.0.0.2",
+							FeatureType:     "second.feature.type",
+						},
+						{
+							FeatureName:     "third-feature-name",
+							AffectedVersion: "v.0.0.3",
+							FixedInVersion:  "v.0.0.3",
+							FeatureType:     "third.feature.type",
+						},
+						{
+							FeatureName:     "fourth-feature-name",
+							AffectedVersion: "v.0.0.4",
+							FixedInVersion:  "v.0.0.4",
+							FeatureType:     "fourth.feature.type",
+						},
+					},
+				},
+			},
+			database.VulnerabilityWithAffected{
+				Vulnerability: database.Vulnerability{
+					Name: "vuln one",
+				},
+				Affected: []database.AffectedFeature{
+					{
+						FeatureName:     "second-feature-name",
+						AffectedVersion: "v.0.0.2",
+						FixedInVersion:  "v.0.0.2",
+						FeatureType:     "second.feature.type",
+					},
+					{
+						FeatureName:     "third-feature-name",
+						AffectedVersion: "v.0.0.3",
+						FixedInVersion:  "v.0.0.3",
+						FeatureType:     "third.feature.type",
+					},
+					{
+						FeatureName:     "fourth-feature-name",
+						AffectedVersion: "v.0.0.4",
+						FixedInVersion:  "v.0.0.4",
+						FeatureType:     "fourth.feature.type",
+					},
+					// additional source features will be apppended to the end of the target slice
+					{
+						FeatureName:     "first-feature-name",
+						AffectedVersion: "v.0.0.1",
+						FixedInVersion:  "v.0.0.1",
+						FeatureType:     "first.feature.type",
+					},
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MergeVulnerabilityFeature(tt.args.sourceVuln, tt.args.targetVuln); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("MergeVulnerabilityFeature() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 type mockDatastore struct {
 	database.MockDatastore
 

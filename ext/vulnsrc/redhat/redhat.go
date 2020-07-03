@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -208,13 +209,6 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 	// first, check the advisory severity
 	if IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class) {
 		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
-			// first, make sure the pending vulnerabilities set doesn't already have this vulnerability def (since they can appear in multiple manifest entries)
-			if pendingVulnNames[cve.Value+" - "+ParseRhsaName(advisoryDefinition)] {
-				// this vuln has already been added to the set, so skip so we don't end up with duplicates
-				log.Trace(fmt.Sprintf("Skipping already-queued vulnerability: %s",
-					cve.Value+" - "+ParseRhsaName(advisoryDefinition)))
-				continue
-			}
 			packageMap := make(map[string]bool)
 			vulnerability := database.VulnerabilityWithAffected{
 				Vulnerability: database.Vulnerability{
@@ -283,9 +277,22 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 				"affected": len(vulnerability.Affected),
 			}).Trace("Append vulnerability")
 			if len(vulnerability.Affected) > 0 {
-				vulnerabilities = append(vulnerabilities, vulnerability)
-				// add it to the running reference list of pending vulnerabilities, so we don't get duplicates later
-				pendingVulnNames[vulnerability.Name] = true
+				// check the pending vulnerabilities set for this vulnerability (since they can appear in multiple manifest entries)
+				if pendingVulnNames[cve.Value+" - "+ParseRhsaName(advisoryDefinition)] {
+					// this vuln has already been added to the set, so skip so we don't end up with duplicates
+					log.Trace(fmt.Sprintf("Filtering unique package info for already-queued vulnerability: %s",
+						cve.Value+" - "+ParseRhsaName(advisoryDefinition)))
+					// get the slice index for the existing copy of this vuln, so we can modify it instead of duplicating it
+					i := GetPendingVulnerabilitySliceIndex(vulnerabilities, vulnerability)
+					if i >= 0 {
+						// merge any new unique vuln features into the existing vuln
+						vulnerabilities[i] = MergeVulnerabilityFeature(vulnerability, vulnerabilities[i])
+					}
+				} else {
+					vulnerabilities = append(vulnerabilities, vulnerability)
+					// add it to the running reference list of pending vulnerabilities, so we don't get duplicates later
+					pendingVulnNames[vulnerability.Name] = true
+				}
 			}
 		}
 	} else {
@@ -296,6 +303,42 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 			advisoryDefinition.Class))
 	}
 	return
+}
+
+// MergeVulnerabilityFeature - copy non-duplicate affected packages from sourceVuln to targetVuln, and return targetVuln
+func MergeVulnerabilityFeature(sourceVuln database.VulnerabilityWithAffected, targetVuln database.VulnerabilityWithAffected) database.VulnerabilityWithAffected {
+	for _, sourceAffectedFeature := range sourceVuln.Affected {
+		//
+		if !VulnerabilityContainsFeature(targetVuln, sourceAffectedFeature) {
+			// targetVuln doesn't contain the feature; append it
+			targetVuln.Affected = append(targetVuln.Affected, sourceAffectedFeature)
+		}
+	}
+	return targetVuln
+}
+
+// VulnerabilityContainsFeature - check whether the given vulnerability already contains the given feature
+func VulnerabilityContainsFeature(vulnerability database.VulnerabilityWithAffected, comparisonFeature database.AffectedFeature) bool {
+	for _, existingFeature := range vulnerability.Affected {
+		if reflect.DeepEqual(existingFeature, comparisonFeature) {
+			// match found
+			return true
+		}
+	}
+	// no match found
+	return false
+}
+
+// GetPendingVulnerabilitySliceIndex - get the slice index for the given vulnerability (or -1 if not present)
+func GetPendingVulnerabilitySliceIndex(vulnSet []database.VulnerabilityWithAffected, lookupVuln database.VulnerabilityWithAffected) int {
+	for i := range vulnSet {
+		if vulnSet[i].Name == lookupVuln.Name {
+			// match found
+			return i
+		}
+	}
+	// no match found
+	return -1
 }
 
 // ConstructVulnerabilityIDs - construct the []VulnerabilityID set from the given advisory definition
