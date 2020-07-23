@@ -947,8 +947,6 @@ func TestMergeVulnerabilityFeature(t *testing.T) {
 		args args
 		want database.VulnerabilityWithAffected
 	}{
-		// TODO: Add test cases.
-
 		{
 			"one merged from two sets of three features",
 			args{
@@ -1046,6 +1044,65 @@ func TestMergeVulnerabilityFeature(t *testing.T) {
 	}
 }
 
+func TestCollectVulnsForAdvisory(t *testing.T) {
+	pwd, _ := os.Getwd()
+	fileCollectVulnsTestDataRhel7 := pwd + "/testdata/v2/collect-vulns-rhel7.xml"
+	xmlCollectVulnsTestDataRhel7, err := ioutil.ReadFile(fileCollectVulnsTestDataRhel7)
+	if err != nil {
+		log.Fatal("error reading " + fileCollectVulnsTestDataRhel7)
+	}
+	ovalDocRhel7 := OvalV2Document{}
+	err = xml.Unmarshal([]byte(xmlCollectVulnsTestDataRhel7), &ovalDocRhel7)
+	if err != nil {
+		// log error and continue
+		log.Fatal(err)
+	}
+	fileCollectVulnsTestDataRhel8 := pwd + "/testdata/v2/collect-vulns-rhel8.xml"
+	xmlCollectVulnsTestDataRhel8, err := ioutil.ReadFile(fileCollectVulnsTestDataRhel8)
+	if err != nil {
+		log.Fatal("error reading " + fileCollectVulnsTestDataRhel8)
+	}
+	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+
+	// should find one vuln
+	if (len(accumulatedVulnerabilities) != 1) {
+		log.Fatal(fmt.Sprintf("error: wrong vulns count after first document parse (expected: 1; found: %d)", len(accumulatedVulnerabilities)))
+	}
+	// should find one vuln affected feature
+	if (len(accumulatedVulnerabilities[0].Affected) != 1) {
+		log.Fatal(fmt.Sprintf("error: wrong vaf count after first document parse (expected: 1; found: %d)", len(accumulatedVulnerabilities)))
+	}
+
+	ovalDocRhel8 := OvalV2Document{}
+	err = xml.Unmarshal([]byte(xmlCollectVulnsTestDataRhel8), &ovalDocRhel8)
+	if err != nil {
+		// log error and continue
+		log.Fatal(err)
+	}
+	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel8.DefinitionSet.Definitions[0], ovalDocRhel8), ovalDocRhel8)
+
+	// should still find one vuln
+	if (len(accumulatedVulnerabilities) != 1) {
+		log.Fatal(fmt.Sprintf("error: wrong vulns count after second document parse (expected: 1; found: %d)", len(accumulatedVulnerabilities)))
+	}
+	// should find two vuln affected features
+	if (len(accumulatedVulnerabilities[0].Affected) != 2) {
+		log.Fatal(fmt.Sprintf("error: wrong vaf count after first document parse (expected: 2; found: %d)", len(accumulatedVulnerabilities)))
+	}
+
+	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+
+	// should still find one vuln
+	if (len(accumulatedVulnerabilities) != 1) {
+		log.Fatal(fmt.Sprintf("error: wrong vulns count after first document re-parse (expected: 1; found: %d)", len(accumulatedVulnerabilities)))
+	}
+	// should still find two vuln affected features
+	if (len(accumulatedVulnerabilities[0].Affected) != 2) {
+		log.Fatal(fmt.Sprintf("error: wrong vaf count after first document re-parse (expected: 2; found: %d)", len(accumulatedVulnerabilities)))
+	}
+
+}
+
 type mockDatastore struct {
 	database.MockDatastore
 
@@ -1127,3 +1184,4 @@ func newmockDatastore() *mockDatastore {
 	}
 	return md
 }
+

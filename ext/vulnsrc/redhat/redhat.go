@@ -72,6 +72,8 @@ var SupportedDefinitionTypes = map[string]bool{"patch": true}
 // pendingVulnNames - quick running reference (by name) of all the vulnerabilities which have been added to the pending list
 var pendingVulnNames = map[string]bool{}
 
+var accumulatedVulnerabilities = []database.VulnerabilityWithAffected{}
+
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
 }
@@ -142,16 +144,12 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				"updater": "RedHat",
 			}).Debug("Start parsing advisories for vulnerabilities")
 
-			collectedVulnerabilities := CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
+			CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
 			log.WithFields(log.Fields{
-				"collectedVulns": len(collectedVulnerabilities),
-				"pendingVulns":   len(resp.Vulnerabilities),
+				"collectedVulns": len(accumulatedVulnerabilities),
+				"pendingVulns":   len(accumulatedVulnerabilities),
 				"manifestEntry":  manifestEntry.BzipPath,
 			}).Info("Append parsed vulnerabilities to pending set")
-
-			resp.Vulnerabilities = append(resp.Vulnerabilities, collectedVulnerabilities...)
-
-			log.Debug(fmt.Sprintf("Total pending vulns: %d", len(resp.Vulnerabilities)))
 
 			// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
 			flagKey, flagVal := ConstructFlagForManifestEntrySignature(manifestEntry, datastore)
@@ -165,6 +163,8 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 		}
 
 	}
+
+	resp.Vulnerabilities = append(resp.Vulnerabilities, accumulatedVulnerabilities...)
 
 	// debug
 	log.Debug(fmt.Sprintf("Updating advisory-last-checked-on date in database to: %s", time.Now().Format(AdvisoryDateFormat)))
@@ -196,16 +196,16 @@ func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Docu
 }
 
 // CollectVulnerabilities - walk definitions and collect relevant/unprocessed vulnerability info
-func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
+func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) {
 	// walk the provided set of advisory definitions
 	for _, advisoryDefinition := range advisoryDefinitions {
-		vulnerabilities = append(vulnerabilities, CollectVulnsForAdvisory(advisoryDefinition, ovalDoc)...)
+		CollectVulnsForAdvisory(advisoryDefinition, ovalDoc)
 	}
-	return vulnerabilities
+	return
 }
 
 // CollectVulnsForAdvisory - get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
-func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
+func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) {
 	// first, check the advisory severity
 	if IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class) {
 		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
@@ -283,13 +283,13 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 					log.Trace(fmt.Sprintf("Filtering unique package info for already-queued vulnerability: %s",
 						cve.Value+" - "+ParseRhsaName(advisoryDefinition)))
 					// get the slice index for the existing copy of this vuln, so we can modify it instead of duplicating it
-					i := GetPendingVulnerabilitySliceIndex(vulnerabilities, vulnerability)
+					i := GetPendingVulnerabilitySliceIndex(accumulatedVulnerabilities, vulnerability)
 					if i >= 0 {
 						// merge any new unique vuln features into the existing vuln
-						vulnerabilities[i] = MergeVulnerabilityFeature(vulnerability, vulnerabilities[i])
+						accumulatedVulnerabilities[i] = MergeVulnerabilityFeature(vulnerability, accumulatedVulnerabilities[i])
 					}
 				} else {
-					vulnerabilities = append(vulnerabilities, vulnerability)
+					accumulatedVulnerabilities = append(accumulatedVulnerabilities, vulnerability)
 					// add it to the running reference list of pending vulnerabilities, so we don't get duplicates later
 					pendingVulnNames[vulnerability.Name] = true
 				}
