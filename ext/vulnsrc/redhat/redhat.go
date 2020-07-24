@@ -69,11 +69,6 @@ var SupportedArches = map[string]bool{"x86_64": true, "noarch": true}
 // SupportedDefinitionTypes - supported definition classes
 var SupportedDefinitionTypes = map[string]bool{"patch": true}
 
-// pendingVulnNames - quick running reference (by name) of all the vulnerabilities which have been added to the pending list
-var pendingVulnNames = map[string]bool{}
-
-var accumulatedVulnerabilities = []database.VulnerabilityWithAffected{}
-
 func init() {
 	vulnsrc.RegisterUpdater("redhat", &updater{})
 }
@@ -81,6 +76,12 @@ func init() {
 func (u *updater) Clean() {}
 
 func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateResponse, err error) {
+	// all accumulated vulnerabilities for the current updater cycle
+	var accumulatedVulnerabilities = []database.VulnerabilityWithAffected{}
+
+	// quick running reference (by name) of all the vulnerabilities which have been added to the pending list
+	var pendingVulnNames = map[string]bool{}
+
 	log.WithField("package", "RedHat").Info("Start fetching vulnerabilities")
 
 	pulpManifestBody, err := FetchPulpManifest(OvalV2BaseURL + PulpManifest)
@@ -99,6 +100,8 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 	// walk the set of pulpManifestEntries
 	for _, manifestEntry := range pulpManifestEntries {
 		log.Debug(fmt.Sprintf("Processing manifest entry (BzipPath: %s)", manifestEntry.BzipPath))
+		// collected vulnerabilities from the current document
+		var currentCollectedVulnerabilities = []database.VulnerabilityWithAffected{}
 		// check if this entry has already been processed (based on its sha256 hash)
 		if IsNewOrUpdatedManifestEntry(manifestEntry, datastore) {
 			unprocessedAdvisories := []ParsedAdvisory{}
@@ -132,38 +135,47 @@ func (u *updater) Update(datastore database.Datastore) (resp vulnsrc.UpdateRespo
 				log.Error(err)
 				continue
 			}
-			if len(unprocessedAdvisories) < 1 {
-				log.Debug("Successful update, no unprocessed advisories found.")
-				continue
+			// were any unprocessed advisories found?
+			if len(unprocessedAdvisories) > 0 {
+				// unprocessed advisories found in the current document, process them now
+				log.Debug(fmt.Sprintf("Successful update, found %d unprocessed advisories in document: %s",
+					len(unprocessedAdvisories), manifestEntry.BzipPath))
+
+				log.WithFields(log.Fields{
+					"items":   len(unprocessedAdvisories),
+					"updater": "RedHat",
+				}).Debug("Start parsing advisories for vulnerabilities")
+
+				// collect all vulnerability data from the current document
+				currentCollectedVulnerabilities = CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
+
+				// merge the collected vuln data from this document into the running set from all documents processed so far
+				//   during the current updater cycle, then update the pending vuln names quick-reference list
+				accumulatedVulnerabilities, pendingVulnNames = MergeVulnerabilities(currentCollectedVulnerabilities,
+					accumulatedVulnerabilities, pendingVulnNames)
 			} else {
-				log.Debug(fmt.Sprintf("Successful update, found %d unprocessed advisories.", len(unprocessedAdvisories)))
+				// no unprocessed advisories were found in the current document
+				log.Debug(fmt.Sprintf("No unprocessed advisories found in document: %s", manifestEntry.BzipPath))
 			}
 
-			log.WithFields(log.Fields{
-				"items":   len(unprocessedAdvisories),
-				"updater": "RedHat",
-			}).Debug("Start parsing advisories for vulnerabilities")
-
-			CollectVulnerabilities(unprocessedAdvisories, ovalDoc)
-			log.WithFields(log.Fields{
-				"collectedVulns": len(accumulatedVulnerabilities),
-				"pendingVulns":   len(accumulatedVulnerabilities),
-				"manifestEntry":  manifestEntry.BzipPath,
-			}).Info("Append parsed vulnerabilities to pending set")
-
-			// remember the bzip hash for this entry, so we don't re-process it again next time (if unchanged)
+			// remember the bzip hash for this document entry, so we don't re-process it again next time if it's unchanged
 			flagKey, flagVal := ConstructFlagForManifestEntrySignature(manifestEntry, datastore)
 			resp.Flags[flagKey] = flagVal
 
-			log.Trace(fmt.Sprintf("continuing next loop..."))
+			// since the current document was determined to be new/updated, log a summary of what was collected
+			log.WithFields(log.Fields{
+				"collectedVulns":     len(currentCollectedVulnerabilities),
+				"totalPendingVulns":  len(accumulatedVulnerabilities),
+				"document":           manifestEntry.BzipPath,
+			}).Info("Appending collected vulnerabilities to pending set")
 		} else {
 			// this pulp manifest entry has already been processed; log and skip it
 			log.Debug("Pulp manifest entry unchanged since last seen. Skipping: " + manifestEntry.BzipPath)
-			continue
 		}
-
+		// (continue next loop)
 	}
 
+	// append the set of accumulated vulnerabilities to the update response
 	resp.Vulnerabilities = append(resp.Vulnerabilities, accumulatedVulnerabilities...)
 
 	// debug
@@ -196,16 +208,16 @@ func GatherUnprocessedAdvisories(manifestEntry ManifestEntry, ovalDoc OvalV2Docu
 }
 
 // CollectVulnerabilities - walk definitions and collect relevant/unprocessed vulnerability info
-func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) {
+func CollectVulnerabilities(advisoryDefinitions []ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// walk the provided set of advisory definitions
 	for _, advisoryDefinition := range advisoryDefinitions {
-		CollectVulnsForAdvisory(advisoryDefinition, ovalDoc)
+		vulnerabilities = append(vulnerabilities, CollectVulnsForAdvisory(advisoryDefinition, ovalDoc)...)
 	}
-	return
+	return vulnerabilities
 }
 
 // CollectVulnsForAdvisory - get the set of vulns for the given advisory (full doc must also be passed, for the states/tests/objects references)
-func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) {
+func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Document) (vulnerabilities []database.VulnerabilityWithAffected) {
 	// first, check the advisory severity
 	if IsSignificantSeverity(advisoryDefinition.Metadata.Advisory.Severity) && IsSupportedDefinitionType(advisoryDefinition.Class) {
 		for _, cve := range advisoryDefinition.Metadata.Advisory.CveList {
@@ -277,22 +289,8 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 				"affected": len(vulnerability.Affected),
 			}).Trace("Append vulnerability")
 			if len(vulnerability.Affected) > 0 {
-				// check the pending vulnerabilities set for this vulnerability (since they can appear in multiple manifest entries)
-				if pendingVulnNames[cve.Value+" - "+ParseRhsaName(advisoryDefinition)] {
-					// this vuln has already been added to the set, so skip so we don't end up with duplicates
-					log.Trace(fmt.Sprintf("Filtering unique package info for already-queued vulnerability: %s",
-						cve.Value+" - "+ParseRhsaName(advisoryDefinition)))
-					// get the slice index for the existing copy of this vuln, so we can modify it instead of duplicating it
-					i := GetPendingVulnerabilitySliceIndex(accumulatedVulnerabilities, vulnerability)
-					if i >= 0 {
-						// merge any new unique vuln features into the existing vuln
-						accumulatedVulnerabilities[i] = MergeVulnerabilityFeature(vulnerability, accumulatedVulnerabilities[i])
-					}
-				} else {
-					accumulatedVulnerabilities = append(accumulatedVulnerabilities, vulnerability)
-					// add it to the running reference list of pending vulnerabilities, so we don't get duplicates later
-					pendingVulnNames[vulnerability.Name] = true
-				}
+				// add the vulnerability as-is (de-dup and feature merging is handled via the MergeVulnerabilities call in Update)
+				vulnerabilities = append(vulnerabilities, vulnerability)
 			}
 		}
 	} else {
@@ -302,7 +300,30 @@ func CollectVulnsForAdvisory(advisoryDefinition ParsedAdvisory, ovalDoc OvalV2Do
 			advisoryDefinition.Metadata.Advisory.Severity,
 			advisoryDefinition.Class))
 	}
-	return
+	return vulnerabilities
+}
+
+// MergeVulnerabilities - walk definitions and collect relevant/unprocessed vulnerability info
+func MergeVulnerabilities(mergeCandidates []database.VulnerabilityWithAffected, accumulatedVulns []database.VulnerabilityWithAffected, pendingVulnNames map[string]bool) ([]database.VulnerabilityWithAffected, map[string]bool) {
+	// walk the set to merge candidates
+	for _, vulnerability := range mergeCandidates {
+		// check the pending vulnerabilities set for this vulnerability (since they can appear in multiple manifest entries)
+		if pendingVulnNames[vulnerability.Name] {
+			// this vuln has already been added to the set, so skip so we don't end up with duplicates
+			log.Trace(fmt.Sprintf("Filtering unique package info for already-queued vulnerability: %s", vulnerability.Name))
+			// get the slice index for the existing copy of this vuln, so we can modify it instead of duplicating it
+			i := GetPendingVulnerabilitySliceIndex(accumulatedVulns, vulnerability)
+			if i >= 0 {
+				// merge any new unique vuln features into the existing vuln
+				accumulatedVulns[i] = MergeVulnerabilityFeature(vulnerability, accumulatedVulns[i])
+			}
+		} else {
+			accumulatedVulns = append(accumulatedVulns, vulnerability)
+			// add it to the running reference list of pending vulnerabilities, so we don't get duplicates later
+			pendingVulnNames[vulnerability.Name] = true
+		}
+	}
+	return accumulatedVulns, pendingVulnNames
 }
 
 // MergeVulnerabilityFeature - copy non-duplicate affected packages from sourceVuln to targetVuln, and return targetVuln

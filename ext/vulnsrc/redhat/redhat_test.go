@@ -1044,6 +1044,7 @@ func TestMergeVulnerabilityFeature(t *testing.T) {
 	}
 }
 
+// (also tests MergeVulnerabilities)
 func TestCollectVulnsForAdvisory(t *testing.T) {
 	pwd, _ := os.Getwd()
 	fileCollectVulnsTestDataRhel7 := pwd + "/testdata/v2/collect-vulns-rhel7.xml"
@@ -1062,7 +1063,12 @@ func TestCollectVulnsForAdvisory(t *testing.T) {
 	if err != nil {
 		log.Fatal("error reading " + fileCollectVulnsTestDataRhel8)
 	}
-	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+	var currentCollectedVulnerabilities = []database.VulnerabilityWithAffected{}
+	var accumulatedVulnerabilities = []database.VulnerabilityWithAffected{}
+	var pendingVulnNames = map[string]bool{}
+
+	currentCollectedVulnerabilities = CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+	accumulatedVulnerabilities, pendingVulnNames = MergeVulnerabilities(currentCollectedVulnerabilities, accumulatedVulnerabilities, pendingVulnNames)
 
 	// should find one vuln
 	if (len(accumulatedVulnerabilities) != 1) {
@@ -1079,7 +1085,8 @@ func TestCollectVulnsForAdvisory(t *testing.T) {
 		// log error and continue
 		log.Fatal(err)
 	}
-	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel8.DefinitionSet.Definitions[0], ovalDocRhel8), ovalDocRhel8)
+	currentCollectedVulnerabilities = CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel8.DefinitionSet.Definitions[0], ovalDocRhel8), ovalDocRhel8)
+	accumulatedVulnerabilities, pendingVulnNames = MergeVulnerabilities(currentCollectedVulnerabilities, accumulatedVulnerabilities, pendingVulnNames)
 
 	// should still find one vuln
 	if (len(accumulatedVulnerabilities) != 1) {
@@ -1090,7 +1097,8 @@ func TestCollectVulnsForAdvisory(t *testing.T) {
 		log.Fatal(fmt.Sprintf("error: wrong vaf count after first document parse (expected: 2; found: %d)", len(accumulatedVulnerabilities)))
 	}
 
-	CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+	currentCollectedVulnerabilities = CollectVulnsForAdvisory(ParseAdvisory(ovalDocRhel7.DefinitionSet.Definitions[0], ovalDocRhel7), ovalDocRhel7)
+	accumulatedVulnerabilities, pendingVulnNames = MergeVulnerabilities(currentCollectedVulnerabilities, accumulatedVulnerabilities, pendingVulnNames)
 
 	// should still find one vuln
 	if (len(accumulatedVulnerabilities) != 1) {
